@@ -1,0 +1,23 @@
+[project]
+name = "my_thesis_project"
+version = "0.1.0"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.mutmut]
+# The directory where source code lives
+paths_to_mutate = ["src/"]
+
+# The directory where tests live
+tests_dir = ["tests/"]
+
+# Files or directories to ignore during mutation testing
+paths_to_ignore = ["tests/"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+    "src",
+]
