@@ -1,0 +1,50 @@
+[
+  {
+    "repo_name": "pallets/click",
+    "bug_commit_sha": "7db1f209b0b01939ba1e864fe74d3f00dac89dd5",
+    "parent_commit_sha": "2a0e3ba907927ade6951d5732b775f11b54cb766",
+    "commit_message": "Popen() list-arg pager process without shell=True",
+    "issue_title": "N/A",
+    "issue_body": "No issue referenced."
+  },
+  {
+    "repo_name": "python-attrs/attrs",
+    "bug_commit_sha": "4e2c89c82398914dbbe24fe00b03f00a8b8efe05",
+    "parent_commit_sha": "1315e42fe51743fe1c3529da6792dcda2ef6cc1f",
+    "commit_message": "Update dev (#1473)",
+    "issue_title": "Update dev",
+    "issue_body": null
+  },
+  {
+    "repo_name": "Delgan/loguru",
+    "bug_commit_sha": "92952b912c6e32866f2ec3dd6bee2aa5403d418b",
+    "parent_commit_sha": "78f86ffcfeef1f194cb3ab2a59beed1e83af8312",
+    "commit_message": "Fix \"NO_COLOR\" and \"FORCE_COLOR\" affecting non-standard streams",
+    "issue_title": "N/A",
+    "issue_body": "No issue referenced."
+  },
+  {
+    "repo_name": "Textualize/rich",
+    "bug_commit_sha": "b96cd22883640a2e7865ec00551c188f59331ca4",
+    "parent_commit_sha": "1dcc3f6a6716daafbe3d1a0bce42d8c84dfee130",
+    "commit_message": "typing fix",
+    "issue_title": "N/A",
+    "issue_body": "No issue referenced."
+  },
+  {
+    "repo_name": "mahmoud/boltons",
+    "bug_commit_sha": "0c88f25323de3ff85bcca844b9ce6cd171a80392",
+    "parent_commit_sha": "d70669ac4b1b31d1455a388270cb47b075c44cc0",
+    "commit_message": "Fix Table.to_text() sizing",
+    "issue_title": "N/A",
+    "issue_body": "No issue referenced."
+  },
+  {
+    "repo_name": "arrow-py/arrow",
+    "bug_commit_sha": "97695bfce6977fb117459600933768827ef23aaf",
+    "parent_commit_sha": "d8bf13d4441300fff017d2fe33d4eae032e37768",
+    "commit_message": "Migrate Arrow to use ZoneInfo for timezones (#1217)",
+    "issue_title": "Migrate Arrow to use ZoneInfo for timezones",
+    "issue_body": "- **Fix test errors and deprecation warnings**\r\n- **Migrate to timezone.utc**\r\n- **Migrate from tzlocal to datetime.now().astimezone()**\r\n- **Upgrade dependencies**\r\n\r\n## Pull Request Checklist\r\n\r\nThank you for taking the time to improve Arrow! Before submitting your pull request, please check all *appropriate* boxes:\r\n\r\n<!-- Check boxes by placing an x in the brackets like this: [x] -->\r\n- [x] \ud83e\uddea  Added **tests** for changed code.\r\n- [x] \ud83d\udee0\ufe0f  All tests **pass** when run locally (run `tox` or `make test` to find out!).\r\n- [x] \ud83e\uddf9  All linting checks **pass** when run locally (run `tox -e lint` or `make lint` to find out!).\r\n- [ ] \ud83d\udcda  Updated **documentation** for changed code.\r\n- [x] \u23e9  Code is **up-to-date** with the `master` branch.\r\n\r\nIf you have *any* questions about your code changes or any of the points above, please submit your questions along with the pull request and we will try our best to help!\r\n\r\n## Description of Changes\r\n\r\n<!--\r\nReplace this commented text block with a description of your code changes.\r\n\r\nIf your PR has an associated issue, insert the issue number (e.g. #703) or directly link to the GitHub issue (e.g. https://github.com/arrow-py/arrow/issues/703).\r\n\r\nPro-tip: writing \"Closes: #703\" in the PR body will automatically close issue #703 when the PR is merged.\r\n-->\r\n\r\nMigrate Arrow to use ZoneInfo from PEP 615 standard - https://peps.python.org/pep-0615/. This reduces our reliance on dateutil's tz data base and instead uses the standard library.\r\n\r\nCloses: #825\r\nCloses: #1094\r\n"
+  }
+]
