@@ -5,3 +5,5 @@
 Raktárkészlet és megrendelés menedzselő program, ami a weboldalunkról megkapja a megrendeléseket és azoknak az adatait esetleg ai segítségével azt is megmondja előre, hogy várhatóan mennyi megrendelés lesz, mikor fogy el a raktárkészlet
 
 alibaba beszállító kereső, egy ai-nak megmondom és megmutatom, hogy milyen terméket keresek, és megkeresi nekem a legolcsóbbat, vagy automatizáció seleniummal
+
+mesterséges intelligencia, ami helyettem válaszol az emailekre
