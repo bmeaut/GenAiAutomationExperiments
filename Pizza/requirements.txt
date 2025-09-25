@@ -1,0 +1,5 @@
+selenium>=4.15.0
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0
+requests>=2.31.0
+tqdm>=4.65.0
