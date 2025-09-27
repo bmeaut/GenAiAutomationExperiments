@@ -10,7 +10,7 @@ def main():
     # GUI configuration and startup
     root = tk.Tk()
     root.title("LLM Bug Analysis Framework")
-    root.geometry("800x600")
+    root.geometry("800x1000")
     root.resizable(True, True)
 
     app = Application(master=root)

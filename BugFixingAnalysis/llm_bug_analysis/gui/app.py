@@ -3,7 +3,7 @@ from tkinter import messagebox, scrolledtext, simpledialog
 import json
 import threading
 from typing import Optional
-from core import corpus_builder, pipeline
+from core import corpus_builder, pipeline, cleanup_manager
 
 
 class Application(tk.Frame):
@@ -23,7 +23,7 @@ class Application(tk.Frame):
 
     def create_widgets(self):
 
-        # Repository Management Section
+        # repository management section
         repo_frame = tk.LabelFrame(self, text="Target Repositories")
         repo_frame.pack(fill="x", expand=False, pady=5)
 
@@ -37,30 +37,58 @@ class Application(tk.Frame):
         )
         repo_btn_frame.pack(side="right", fill="y")
 
-        # Main Control Buttons Section
+        # main control buttons section
         control_frame = tk.LabelFrame(self, text="Controls")
         control_frame.pack(fill="x", expand=False, pady=10)
 
+        # frame to hold top-row widgets
+        options_frame = tk.Frame(control_frame)
+        options_frame.pack(fill="x", padx=5, pady=2)
+
         tk.Checkbutton(
-            control_frame,
+            options_frame,
             text="Skip LLM Fix (Dry Run to test dependencies)",
             variable=self.skip_llm_var,
-        ).pack(fill="x")
+        ).pack(side="left")
 
         tk.Button(
-            control_frame, text="1. Build Bug Corpus", command=self.run_corpus_builder
+            options_frame, text="Clean Cache", command=self.clean_cache, fg="red"
+        ).pack(side="right")
+
+        # frame to hold main buttons
+        actions_frame = tk.Frame(control_frame)
+        actions_frame.pack(fill="x", expand=True)
+
+        tk.Button(
+            actions_frame, text="1. Build Bug Corpus", command=self.run_corpus_builder
         ).pack(fill="x")
         tk.Button(
-            control_frame, text="2. Run Analysis Pipeline", command=self.run_pipeline
+            actions_frame, text="2. Run Analysis Pipeline", command=self.run_pipeline
         ).pack(fill="x")
 
-        # --- Log Viewer Section ---
+        # log viewer section
         log_frame = tk.LabelFrame(self, text="Logs")
         log_frame.pack(fill="both", expand=True, pady=5)
         self.log_text = scrolledtext.ScrolledText(
             log_frame, state="disabled", height=15
         )
         self.log_text.pack(fill="both", expand=True)
+
+    def clean_cache(self):
+        """
+        Asks the user for confirmation and then clears the venv_cache
+        directory in a separate thread.
+        """
+        # ask for confirmation
+        if messagebox.askyesno(
+            "Confirm Cache Deletion",
+            "Are you sure you want to delete the entire venv cache?\n"
+            "This will force all dependencies to be re-installed on the next run.",
+        ):
+            # run deletion in a separate thread to not block GUI
+            threading.Thread(
+                target=cleanup_manager.clear_venv_cache, args=(self.log,), daemon=True
+            ).start()
 
     def add_repo(self):
         repo_name = simpledialog.askstring(
