@@ -1,0 +1,18 @@
+# secret files
+.env
+
+# Python cache and environment files
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE files
+.vscode/
+
+# Application output
+/llm_bug_analysis/results/
+# exclude
+!/llm_bug_analysis/results/results.csv
+    
+/llm_bug_analysis/corpus.json
