@@ -1,0 +1,16 @@
+# Core GitHub API and Git interaction
+PyGithub
+GitPython
+
+# Code Analysis
+radon
+
+# Configuration and Environment
+python-dotenv
+toml
+
+# Dependency Management for target repos
+poetry
+uv
+
+pytest
