@@ -121,7 +121,7 @@ def _run_ai_fix_evaluation(
     except subprocess.CalledProcessError as e:
         tests_passed = False
         log_callback(f"    --> AI Fix Tests FAILED. Return code: {e.returncode}")
-        # Use our new helper to save the detailed log.
+        # save detailed log
         log_path = _save_test_failure_log(
             project_root, bug["repo_name"], fix_sha, "ai_fix", e
         )
@@ -324,59 +324,3 @@ def run(log_callback, skip_llm_fix: bool = False):
         finally:
             # the handler and the venv are cleaned up only after all commits are done
             handler.cleanup()
-
-    # # main loop: process each bug
-    # for bug in corpus:
-    #     log_callback(
-    #         f"\n--- Analyzing {bug['repo_name']} | Fix: {bug['bug_commit_sha'][:7]} ---"
-    #     )
-    #     handler = project_handler.ProjectHandler(bug["repo_name"], log_callback)
-    #     try:
-    #         handler.setup()
-
-    #         results = {**bug}  # start with basic info
-
-    #         if not skip_llm_fix:
-    #             ai_results = _run_ai_fix_evaluation(
-    #                 bug, handler, test_command, log_callback
-    #             )
-    #             if "error" in ai_results:
-    #                 continue
-    #             results["ai_results"] = ai_results
-    #             changed_files = ai_results.get("changed_files", [])
-    #         else:
-    #             log_callback("  --> Skipping AI Fix evaluation as requested.")
-    #             results["ai_results"] = {
-    #                 "applied_ok": "SKIPPED",
-    #                 "tests_passed": "SKIPPED",
-    #                 "complexity": {"total_cc": "SKIPPED", "total_cognitive": "SKIPPED"},
-    #             }
-    #             # still need to find out which files were changed for the human analysis.
-    #             changed_files = handler.get_changed_files(bug["bug_commit_sha"])
-
-    #         # always run the human evaluation, for easier tesing
-    #         results["comp_before"] = analysis.analyze_files(
-    #             handler.repo_path, changed_files, log_callback
-    #         )
-    #         results["human_results"] = _run_human_fix_evaluation(
-    #             bug, handler, test_command, changed_files, log_callback
-    #         )
-
-    #         log_callback(
-    #             f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
-    #         )
-    #         log_callback(
-    #             f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
-    #         )
-    #         log_callback(
-    #             f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
-    #         )
-
-    #         _log_results(results_path, results)
-
-    #     except Exception as e:
-    #         log_callback(
-    #             f"  FATAL ERROR during analysis of {bug['bug_commit_sha'][:7]}: {e}"
-    #         )
-    #     finally:
-    #         handler.cleanup()
