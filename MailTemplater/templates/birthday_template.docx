@@ -1,0 +1,22 @@
+BIRTHDAY WISHES TEMPLATE
+
+Happy Birthday {{Name}}!
+
+Dear {{Name}},
+
+The entire {{Department}} team wants to wish you a very happy birthday!
+
+We appreciate having you as our {{Position}} and hope you have a wonderful celebration.
+
+Your Contact: {{Email}}
+Your Department: {{Department}}
+Years with us: (Started {{Start Date}})
+
+Enjoy your special day!
+
+Best wishes,
+Your colleagues in {{Department}}
+
+---
+Merge Fields: {{Name}}, {{Email}}, {{Department}}, {{Position}}, {{Start Date}}
+Template ready for bulk processing from Excel data

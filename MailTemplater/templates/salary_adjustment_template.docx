@@ -1,0 +1,31 @@
+SALARY ADJUSTMENT NOTIFICATION
+
+CONFIDENTIAL DOCUMENT
+
+Employee: {{Name}}
+Email: {{Email}}
+Department: {{Department}}
+Current Position: {{Position}}
+
+Dear {{Name}},
+
+We are pleased to inform you of a salary adjustment effective immediately.
+
+Current Details:
+- Current Salary: ${{Salary}}
+- Department: {{Department}}
+- Position: {{Position}}
+- Start Date: {{Start Date}}
+
+Your dedication and performance in the {{Position}} role have been exceptional, and this adjustment reflects our appreciation for your contributions to the {{Department}} team.
+
+Please contact HR if you have any questions regarding this adjustment.
+
+Congratulations and thank you for your continued service!
+
+Sincerely,
+Management Team
+
+---
+Custom Fields: {{Name}}, {{Email}}, {{Department}}, {{Position}}, {{Salary}}, {{Start Date}}
+Ready for automated processing via VBA Macro or Python script

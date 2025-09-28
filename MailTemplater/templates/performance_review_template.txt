@@ -1,0 +1,27 @@
+PERFORMANCE REVIEW NOTIFICATION
+
+To: {{Email}}
+From: hr@company.com
+Subject: Performance Review Scheduled for {{Name}}
+
+Dear {{Name}},
+
+This is to inform you that your annual performance review has been scheduled.
+
+Employee Details:
+- Name: {{Name}}
+- Position: {{Position}}
+- Department: {{Department}}
+- Current Salary: ${{Salary}}
+- Employment Start Date: {{Start Date}}
+
+Your review will cover your performance in the {{Position}} role within the {{Department}} department.
+
+Please prepare any relevant documentation and self-assessment materials prior to your review meeting.
+
+Best regards,
+HR Team
+
+---
+Template Fields: {{Name}}, {{Email}}, {{Department}}, {{Position}}, {{Salary}}, {{Start Date}}
+Auto-fill ready for VBA/Python processing
