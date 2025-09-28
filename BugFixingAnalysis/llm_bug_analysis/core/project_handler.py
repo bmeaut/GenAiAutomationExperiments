@@ -5,10 +5,9 @@ import shutil
 import subprocess
 import tempfile
 import git
-from git import Repo, Commit as GitCommit, Blob
+from git import Optional, Repo, Commit as GitCommit, Blob
 from typing import Callable, Dict, Any
 from core import cleanup_manager
-from core.cleanup_manager import VENV_CACHE_PATH
 import glob
 import hashlib
 import json
@@ -160,6 +159,8 @@ class ProjectHandler:
     log: Callable[[str], None]
     repo_path: str
     repo: Repo | None
+    venv_path: str
+    project_type: str
 
     def __init__(self, repo_name: str, log_callback: Callable[[str], None]):
         self.repo_name = repo_name
@@ -167,16 +168,155 @@ class ProjectHandler:
         self.log = log_callback
         self.repo_path = tempfile.mkdtemp()
         self.repo = None
-
-        # script_path = os.path.abspath(__file__)
-        # project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))
-        # self.venv_cache_path = os.path.join(project_root, "venv_cache")
-        # os.makedirs(self.venv_cache_path, exist_ok=True)
-
-        self.venv_cache_path = VENV_CACHE_PATH  # Use the central path
-        os.makedirs(self.venv_cache_path, exist_ok=True)
+        # persistent venv for handler lifetime
+        self.venv_path = os.path.join(self.repo_path, "venv")
+        self.project_type = "pip"  # will be determined during setup.
 
         cleanup_manager.register_temp_dir(self.repo_path)
+
+    def setup_virtual_environment(self) -> bool:
+        """
+        Creates and installs all dependencies into a single, persistent venv
+        for this project's entire analysis run.
+        """
+        try:
+            self.log(
+                "  Setting up persistent virtual environment for this repository..."
+            )
+
+            self.log("  --> Step 1: Creating the venv directory...")
+            subprocess.run(
+                ["python", "-m", "venv", self.venv_path],
+                check=True,
+                capture_output=True,
+            )
+            self.log("      --> Success.")
+
+            bin_dir = "bin" if os.name != "nt" else "Scripts"
+            pip_exe = os.path.join(self.venv_path, bin_dir, "pip")
+
+            pyproject_path = os.path.join(self.repo_path, "pyproject.toml")
+            if os.path.exists(pyproject_path):
+                with open(pyproject_path, "r") as f:
+                    content = f.read()
+                if "[tool.poetry]" in content:
+                    self.project_type = "poetry"
+                elif os.path.exists(os.path.join(self.repo_path, "uv.lock")):
+                    self.project_type = "uv"
+                else:
+                    self.project_type = "pip"
+
+            self.log(f"  --> Project type identified as: {self.project_type}")
+
+            self.log("  --> Installing core build & test tools...")
+            self._execute_in_venv(
+                [
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "pip",
+                    "poetry",
+                    "uv",
+                    "pytest",
+                    "pytest-cov",
+                    "anyio",
+                ]
+            )
+            self.log("      --> Success.")
+
+            self.log("  Installing project-specific dependencies...")
+            self._install_project_dependencies()
+
+            return True
+
+        except subprocess.CalledProcessError as e:
+            self.log(f"  --> CRITICAL FAILURE: A command failed to execute.")
+            self.log(f"  --> Stderr: {e.stderr}")
+            return False
+        except Exception as e:
+
+            import traceback
+
+            self.log(
+                f"  --> FATAL ERROR during venv setup. The error was NOT a subprocess failure."
+            )
+            self.log(f"  --> Exception Type: {type(e).__name__}")
+            self.log(f"  --> Exception Details: {e}")
+            self.log(f"  --> Full Traceback:\n{traceback.format_exc()}")
+            return False
+
+    def _install_project_dependencies(self):
+        """
+        Private helper that runs the definitive, prioritized dependency
+        installation hierarchy.
+        """
+        pyproject_path = os.path.join(self.repo_path, "pyproject.toml")
+
+        # 1: handle poetry projects first
+        if self.project_type == "poetry":
+            self.log("  Poetry project detected. Installing with 'poetry install'...")
+            self._execute_in_venv(["poetry", "install"])
+            return
+
+        # 2: modern projects with 'uv'
+        if self.project_type == "uv":
+            self.log("  'uv.lock' found. Installing with 'uv sync'...")
+            self._execute_in_venv(["uv", "sync"])
+            return
+
+        # 3: for all other projects, look for a requirements file first.
+        req_file = self._find_requirements_file()
+        if req_file:
+            self.log(f"  Found explicit requirements file: '{req_file}'. Installing...")
+            self.project_type = "pip"
+            # We must install the package itself in addition to the requirements file.
+            self._execute_in_venv(["pip", "install", "-e", "."])
+            self._execute_in_venv(
+                [
+                    "pip",
+                    "install",
+                    "-r",
+                    req_file,
+                ]
+            )
+            return
+
+        # 4: handle other modern projects (flit, hatch, setuptools) using standard pip
+        if os.path.exists(pyproject_path):
+            self.log("  --> Fallback: Installing from pyproject.toml with extras...")
+            self.project_type = "pip"
+            self._execute_in_venv(["pip", "install", "-e", ".[dev,test,tests,typing]"])
+            return
+
+        self.log(
+            "  --> Warning: No dependency installation method found."
+        )  # Allow to proceed even if no deps, tests might still run
+
+    def run_tests_in_venv(self, test_command: str) -> subprocess.CompletedProcess:
+        """Runs a command inside the already-built virtual environment."""
+        self.log(
+            f"  Running test suite with command: '{test_command}' (runner: {self.project_type})"
+        )
+
+        return self._execute_in_venv(
+            test_command.split(), project_type=self.project_type
+        )
+
+    def _find_requirements_file(self) -> Optional[str]:
+        patterns = [
+            "*requirements-dev.txt",
+            "*requirements_dev.txt",
+            "*requirements-test*.txt",
+            "*test-requirements.txt",
+        ]
+        for pattern in patterns:
+            for match in glob.glob(
+                os.path.join(self.repo_path, pattern), recursive=True
+            ) + glob.glob(
+                os.path.join(self.repo_path, "requirements", pattern), recursive=True
+            ):
+                return match
+        return None
 
     def setup(self):
         self.log(f"  Cloning {self.repo_url} into {self.repo_path}")
@@ -220,39 +360,6 @@ class ProjectHandler:
             else False
         )
 
-    def _get_dependency_hash(self) -> str:
-        """
-        Calculates a unique hash based on the contents of all relevant dependency files
-        in the current checkout. This helps in caching virtual environments.
-        """
-        hasher = hashlib.sha256()
-
-        # priority files that define a project's dependencies
-        dependency_files = [
-            "poetry.lock",
-            "uv.lock",
-            "pyproject.toml",
-            "requirements-dev.txt",
-            "requirements_dev.txt",
-            "requirements-test*.txt",
-            "requirements.txt",
-        ]
-
-        found_any_files = False
-        for pattern in dependency_files:
-            # search for the file in the root of the repo
-            for file_path in glob.glob(os.path.join(self.repo_path, pattern)):
-                if os.path.isfile(file_path):
-                    found_any_files = True
-                    # Add file name and content to hash
-                    with open(file_path, "rb") as f:
-                        hasher.update(f.read())
-
-        if not found_any_files:
-            return "no-deps-found"  # default hash
-
-        return hasher.hexdigest()
-
     def _execute_in_venv(
         self,
         command: list[str],
@@ -261,7 +368,7 @@ class ProjectHandler:
     ) -> subprocess.CompletedProcess:
         """
         Executes a command within the project's virtual environment,
-        using the correct method for either Poetry or standard pip projects.
+        using the correct method.
         """
         bin_dir = "bin" if os.name != "nt" else "Scripts"
 
@@ -274,7 +381,7 @@ class ProjectHandler:
             del env["VIRTUAL_ENV"]
 
         # 3. prepend the venv's bin directory to the PATH to find executables.
-        venv_bin_path = os.path.join(self.repo_path, "venv", bin_dir)
+        venv_bin_path = os.path.join(self.venv_path, bin_dir)
         env["PATH"] = f"{venv_bin_path}{os.pathsep}{env['PATH']}"
 
         if project_type == "poetry":
@@ -295,304 +402,6 @@ class ProjectHandler:
             timeout=timeout,
             env=env,
         )
-
-    def run_tests(self, test_command: str, commit_sha: str, run_type: str) -> bool:
-        """
-        Creates a venv, installs dependencies using a pragmatic, prioritized
-        hierarchy of modern tools, and runs the test suite. This is the final version.
-        """
-        try:
-
-            self.log("  Detecting project type...")
-            project_type = "pip"
-
-            pyproject_path = os.path.join(self.repo_path, "pyproject.toml")
-            if os.path.exists(pyproject_path):
-                with open(pyproject_path, "r") as f:
-                    content = f.read()
-                if "[tool.poetry]" in content:
-                    project_type = "poetry"
-                elif os.path.exists(os.path.join(self.repo_path, "uv.lock")):
-                    project_type = "uv"
-                else:
-                    project_type = "pip"
-
-            self.log(f"  --> Project type identified as: {project_type}")
-            local_venv_path = os.path.join(self.repo_path, "venv")
-
-            if project_type == "poetry":
-                # for poetry projects, no cache
-                self.log("  Building fresh environment for Poetry project...")
-                self.log("  Creating isolated Python virtual environment...")
-                subprocess.run(
-                    ["python", "-m", "venv", local_venv_path],
-                    check=True,
-                    capture_output=True,
-                )
-                self.log("  Installing/upgrading core build tools (pip, poetry)...")
-                self._execute_in_venv(["pip", "install", "--upgrade", "pip", "poetry"])
-                self.log("  Installing dependencies with 'poetry install'...")
-                self._execute_in_venv(["poetry", "install"])
-                self.log("    --> Success.")
-            else:
-                # calculate the dependency hash for the current commit
-                self.log("  Calculating dependency hash for this commit...")
-                dep_hash = self._get_dependency_hash()
-                cached_venv_path = os.path.join(self.venv_cache_path, dep_hash)
-
-                # caching logic
-                if os.path.exists(cached_venv_path):
-                    # cache hit: venv already exists
-                    self.log(
-                        f"  --> Cache HIT. Copying pre-built venv (hash: {dep_hash[:8]}...)."
-                    )
-                    shutil.copytree(cached_venv_path, local_venv_path, symlinks=True)
-
-                    self.log("  --> Repairing copied venv paths...")
-                    subprocess.run(
-                        ["python", "-m", "venv", "--upgrade", local_venv_path],
-                        check=True,
-                        capture_output=True,
-                    )
-
-                else:
-                    # cache miss: need to create the venv from scratch
-                    self.log(
-                        f"  --> Cache MISS. Building new venv (hash: {dep_hash[:8]}...)."
-                    )
-
-                    # Step 1: Create the virtual environment.
-                    self.log("  Creating isolated Python virtual environment...")
-                    subprocess.run(
-                        ["python", "-m", "venv", local_venv_path],
-                        cwd=self.repo_path,
-                        check=True,
-                        capture_output=True,
-                    )
-
-                    # Step 2: Upgrade core build tools.
-                    self.log(
-                        "  Installing/upgrading core build tools (pip, poetry, uv)..."
-                    )
-                    self._execute_in_venv(
-                        [
-                            "pip",
-                            "install",
-                            "--upgrade",
-                            "pip",
-                            "poetry",
-                            "uv",
-                            "pytest",
-                            "pytest-cov",
-                            "anyio",
-                        ]
-                    )
-
-                    self.log("  Attempting to install project dependencies...")
-                    installed_deps = False
-                    pyproject_path = os.path.join(self.repo_path, "pyproject.toml")
-
-                    # 1: handle poetry projects first
-                    if os.path.exists(pyproject_path):
-                        with open(pyproject_path, "r") as f:
-                            content = f.read()
-                        if "[tool.poetry]" in content:
-                            project_type = "poetry"
-                            self.log(
-                                "  Poetry project detected. Installing with 'poetry install'..."
-                            )
-                            try:
-                                # poetry into venv
-                                self._execute_in_venv(["pip", "install", "poetry"])
-
-                                self.log(
-                                    "    Configuring poetry to use in-project venv..."
-                                )
-                                self._execute_in_venv(
-                                    [
-                                        "poetry",
-                                        "config",
-                                        "virtualenvs.in-project",
-                                        "true",
-                                    ]
-                                )
-
-                                # install now
-                                self.log("    Installing dependencies...")
-                                self._execute_in_venv(["poetry", "install"])
-
-                                self.log("    --> Success.")
-                                installed_deps = True
-                            except subprocess.CalledProcessError as e:
-                                self.log(
-                                    f"    --> FAILED to install poetry dependencies. Stderr: {e.stderr}"
-                                )
-                                return False
-
-                    # 2: modern projects with 'uv'
-                    if not installed_deps and os.path.exists(
-                        os.path.join(self.repo_path, "uv.lock")
-                    ):
-                        project_type = "uv"
-                        self.log("  'uv.lock' found. Installing with 'uv sync'...")
-                        try:
-                            self._execute_in_venv(["uv", "sync"])
-                            self.log("    --> Success.")
-                            installed_deps = True
-                        except subprocess.CalledProcessError as e:
-                            self.log(
-                                f"    --> FAILED to install with uv sync. Stderr: {e.stderr}"
-                            )
-
-                    # 4: for all other projects, look for a requirements file first.
-                    if not installed_deps:
-                        # glob: find any file that looks like a dev/test requirements file.
-                        req_file_patterns = [
-                            "*requirements-dev.txt",
-                            "*requirements_dev.txt",
-                            "*requirements-test*.txt",
-                            "*test-requirements.txt",
-                        ]
-                        found_req_file = None
-                        for pattern in req_file_patterns:
-                            # search both the root and a 'requirements/' subdirectory.
-                            for match in glob.glob(
-                                os.path.join(self.repo_path, pattern), recursive=True
-                            ) + glob.glob(
-                                os.path.join(self.repo_path, "requirements", pattern),
-                                recursive=True,
-                            ):
-                                found_req_file = match
-                                break
-                            if found_req_file:
-                                break
-
-                        if found_req_file:
-                            self.log(
-                                f"  Found explicit requirements file: '{os.path.relpath(found_req_file, self.repo_path)}'. Installing..."
-                            )
-                            project_type = "pip"
-                            try:
-                                # We must install the package itself in addition to the requirements file.
-                                self._execute_in_venv(["pip", "install", "-e", "."])
-                                self._execute_in_venv(
-                                    [
-                                        "pip",
-                                        "install",
-                                        "-r",
-                                        os.path.relpath(found_req_file, self.repo_path),
-                                    ]
-                                )
-                                self.log("    --> Success.")
-                                installed_deps = True
-                            except subprocess.CalledProcessError as e:
-                                self.log(
-                                    f"    --> FAILED to install from {os.path.basename(found_req_file)}. Stderr: {e.stderr}"
-                                )
-
-                    # 3 handle other modern projects (flit, hatch, setuptools) using standard pip
-                    if not installed_deps and os.path.exists(pyproject_path):
-                        self.log(
-                            "  Standard pip project detected. Installing with 'pip install -e .[extras]'..."
-                        )
-                        project_type = "pip"
-                        try:
-                            self._execute_in_venv(
-                                ["pip", "install", "-e", ".[dev,test,tests,typing]"]
-                            )
-                            self.log("    --> Success.")
-                            installed_deps = True
-                        except subprocess.CalledProcessError as e:
-                            self.log(
-                                f"    --> FAILED to install with pip extras. Stderr: {e.stderr}"
-                            )
-
-                    self.log(
-                        f"  Installation successful. Caching venv for future use..."
-                    )
-
-                    source_venv_path = os.path.join(
-                        self.repo_path, ".venv" if project_type == "poetry" else "venv"
-                    )
-                    shutil.copytree(source_venv_path, cached_venv_path, symlinks=True)
-                    # Ensure the local path exists for the test runner
-                    if not os.path.exists(local_venv_path):
-                        os.symlink(source_venv_path, local_venv_path)
-
-            # test execution
-            pyproject_path = os.path.join(self.repo_path, "pyproject.toml")
-            if os.path.exists(pyproject_path):
-                with open(pyproject_path, "r") as f:
-                    content = f.read()
-                if "[tool.poetry]" in content:
-                    project_type = "poetry"
-                elif os.path.exists(os.path.join(self.repo_path, "uv.lock")):
-                    project_type = "uv"
-                else:
-                    project_type = "pip"
-
-            self.log(
-                f"  Running test suite with command: '{test_command}' (runner: {project_type})"
-            )
-
-            # load ignore list
-            script_path = os.path.abspath(__file__)
-            project_root = os.path.dirname(os.path.dirname(script_path))
-            config_path = os.path.join(project_root, "config.json")
-            with open(config_path, "r") as f:
-                config = json.load(f)
-
-            ignore_list = config.get("ignore_tests", {}).get(self.repo_name, [])
-
-            # construct full pytest command
-            full_test_command = test_command.split()
-            if ignore_list:
-                self.log(f"  --> Ignoring {len(ignore_list)} known flaky test(s).")
-                for test_to_ignore in ignore_list:
-                    full_test_command.extend(["--ignore", test_to_ignore])
-
-            try:
-                # execute full command
-                result = self._execute_in_venv(
-                    test_command.split(), project_type=project_type
-                )
-                self.log("  Tests PASSED.")
-                summary_line = "No summary line found."
-                for line in result.stdout.splitlines():
-                    if "passed" in line and "in" in line and "s" in line:
-                        summary_line = line.strip("= ")
-                self.log(f"    --> Summary: {summary_line}")
-                return True
-            except subprocess.CalledProcessError as e:
-                self.log(f"  Tests FAILED. Return code: {e.returncode}")
-
-                # save the complete test output to a file for later analysis.
-                logs_dir = os.path.join(os.getcwd(), "results", "test_logs")
-                os.makedirs(logs_dir, exist_ok=True)
-                repo_name_safe = self.repo_name.replace("/", "_")
-                log_filename = f"{repo_name_safe}_{commit_sha[:7]}_{run_type}.log"
-                log_path = os.path.join(logs_dir, log_filename)
-
-                log_content = (
-                    f"TEST RUN FAILED\n"
-                    f"-----------------\n"
-                    f"Repository: {self.repo_name}\nCommit SHA: {commit_sha}\nRun Type:   {run_type}\n"
-                    f"Return Code: {e.returncode}\n-----------------\n\n"
-                    f"--- STDOUT ---\n{e.stdout}\n\n"
-                    f"--- STDERR ---\n{e.stderr}\n"
-                )
-                with open(log_path, "w", encoding="utf-8") as f:
-                    f.write(log_content)
-                self.log(f"  --> Detailed test logs saved to: {log_path}")
-
-                return False
-
-        except Exception as e:
-            stderr = getattr(e, "stderr", "N/A")
-            self.log(
-                f"  FATAL ERROR during test setup or execution: {e}\n  Stderr: {stderr}"
-            )
-            return False
 
     def get_changed_files(self, fix_commit_sha: str) -> list[str]:
         """

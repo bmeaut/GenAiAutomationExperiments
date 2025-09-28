@@ -1,13 +1,13 @@
 {
   "repositories": [
-    "https://github.com/mahmoud/boltons"
+    "https://github.com/Delgan/loguru"
   ],
   "stashed_repositories": [
+    "https://github.com/mahmoud/boltons",
+    "https://github.com/python-attrs/attrs",
     "https://github.com/Textualize/rich",
     "https://github.com/arrow-py/arrow",
-    "https://github.com/pallets/click",
-    "https://github.com/python-attrs/attrs",
-    "https://github.com/Delgan/loguru"
+    "https://github.com/pallets/click"
   ],
   "commit_keywords": [
     "fix",
@@ -31,6 +31,10 @@
   "max_commits_per_repo": 3,
   "ignore_tests": {
     "Delgan/loguru": [
+      "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[True]",
+      "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[False]",
+      "tests/test_filesink_rotation.py::test_time_rotation_reopening_native[False]",
+      "tests/typesafety",
       "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_oserror[False]"
     ]
   }

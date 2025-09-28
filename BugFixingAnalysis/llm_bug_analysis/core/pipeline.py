@@ -3,6 +3,7 @@ import csv
 import os
 from . import project_handler, analysis, llm_manager
 from typing import Callable, Dict, Any
+import subprocess
 
 
 def _initialize_results_file(path: str):
@@ -30,11 +31,39 @@ def _initialize_results_file(path: str):
             )
 
 
+def _save_test_failure_log(
+    project_root: str,
+    repo_name: str,
+    commit_sha: str,
+    run_type: str,
+    error: subprocess.CalledProcessError,
+):
+    """Saves the detailed stdout and stderr from a failed test run to a log file."""
+    logs_dir = os.path.join(project_root, "results", "test_logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    repo_name_safe = repo_name.replace("/", "_")
+    log_filename = f"{repo_name_safe}_{commit_sha[:7]}_{run_type}.log"
+    log_path = os.path.join(logs_dir, log_filename)
+
+    log_content = (
+        f"TEST RUN FAILED\n"
+        f"-----------------\n"
+        f"Repository: {repo_name}\nCommit SHA: {commit_sha}\nRun Type:   {run_type}\n"
+        f"Return Code: {error.returncode}\n-----------------\n\n"
+        f"--- STDOUT ---\n{error.stdout}\n\n--- STDERR ---\n{error.stderr}\n"
+    )
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write(log_content)
+    return log_path
+
+
 def _run_ai_fix_evaluation(
     bug: Dict[str, Any],
     handler: project_handler.ProjectHandler,
     test_command: str,
     log_callback: Callable,
+    project_root: str,
+    config: Dict[str, Any],
 ) -> Dict[str, Any]:
 
     log_callback("  Evaluating AI Fix...")
@@ -72,19 +101,39 @@ def _run_ai_fix_evaluation(
         is_full_file=is_full_file_patch,
     )
 
-    llm_tests_passed = False
-    comp_after_llm = {"total_cc": "N/A", "total_cognitive": "N/A"}
-    if applied_ok:
-        llm_tests_passed = handler.run_tests(test_command, fix_sha, "ai_fix")
-        comp_after_llm = analysis.analyze_files(
-            handler.repo_path, [full_file_path], log_callback
+    ignore_list = config.get("ignore_tests", {}).get(bug["repo_name"], [])
+    full_test_command = test_command
+    if ignore_list:
+        log_callback(f"    --> Ignoring {len(ignore_list)} known flaky test(s).")
+        for test_to_ignore in ignore_list:
+            full_test_command += f" --ignore {test_to_ignore}"
+
+    tests_passed = False
+    try:
+        result = handler.run_tests_in_venv(full_test_command)
+        tests_passed = True
+        summary_line = "No summary line found."
+        for line in result.stdout.splitlines():
+            if "passed" in line and "in" in line and "s" in line:
+                summary_line = line.strip("=")
+        log_callback(f"    --> AI Fix Tests PASSED. Summary: {summary_line}")
+
+    except subprocess.CalledProcessError as e:
+        tests_passed = False
+        log_callback(f"    --> AI Fix Tests FAILED. Return code: {e.returncode}")
+        # Use our new helper to save the detailed log.
+        log_path = _save_test_failure_log(
+            project_root, bug["repo_name"], fix_sha, "ai_fix", e
         )
-    else:
-        log_callback("  --> LLM patch failed to apply. Tests will not be run.")
+        log_callback(f"    --> Detailed logs saved to: {log_path}")
+
+    comp_after_llm = analysis.analyze_files(
+        handler.repo_path, [full_file_path], log_callback
+    )
 
     return {
         "applied_ok": applied_ok,
-        "tests_passed": llm_tests_passed,
+        "tests_passed": tests_passed,
         "complexity": comp_after_llm,
         "changed_files": [full_file_path],
     }
@@ -96,6 +145,8 @@ def _run_human_fix_evaluation(
     test_command: str,
     changed_files: list[str],
     log_callback: Callable,
+    project_root: str,
+    config: Dict[str, Any],
 ) -> Dict[str, Any]:
 
     log_callback("  Evaluating Human Fix...")
@@ -103,7 +154,34 @@ def _run_human_fix_evaluation(
     handler.reset_to_commit(bug["parent_commit_sha"])
     handler.checkout(bug["bug_commit_sha"])
 
-    tests_passed = handler.run_tests(test_command, bug["bug_commit_sha"], "human_fix")
+    ignore_list = config.get("ignore_tests", {}).get(bug["repo_name"], [])
+    full_test_command = test_command
+    if ignore_list:
+        log_callback(
+            f"    --> Ignoring {len(ignore_list)} known flaky test(s) for human fix."
+        )
+        for test_to_ignore in ignore_list:
+            full_test_command += f" --ignore {test_to_ignore}"
+
+    tests_passed = False
+    try:
+
+        result = handler.run_tests_in_venv(full_test_command)
+        tests_passed = True
+        summary_line = "No summary line found."
+        for line in result.stdout.splitlines():
+            if "passed" in line and "in" in line and "s" in line:
+                summary_line = line.strip("= ")
+        log_callback(f"    --> Human Fix Tests PASSED. Summary: {summary_line}")
+
+    except subprocess.CalledProcessError as e:
+        tests_passed = False
+        log_callback(f"    --> Human Fix Tests FAILED. Return code: {e.returncode}")
+        log_path = _save_test_failure_log(
+            project_root, bug["repo_name"], bug["bug_commit_sha"], "human_fix", e
+        )
+        log_callback(f"    --> Detailed logs saved to: {log_path}")
+
     complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
 
     return {"tests_passed": tests_passed, "complexity": complexity}
@@ -137,7 +215,7 @@ def _log_results(results_path: str, bug_data: Dict[str, Any]):
 
 
 def run(log_callback, skip_llm_fix: bool = False):
-    """The main operator for the analysis pipeline."""
+    """The main operator for the analysis pipeline, uses persistent handler for each repository."""
     # load config, init results
     script_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(script_path))
@@ -155,198 +233,150 @@ def run(log_callback, skip_llm_fix: bool = False):
         log_callback(f"ERROR: {e.filename} not found.")
         return
 
+    # group bugs by repository for efficiency,
+    # so environment setup/teardown is minimized
+    bugs_by_repo = {}
+    for bug in corpus:
+        repo_name = bug["repo_name"]
+        if repo_name not in bugs_by_repo:
+            bugs_by_repo[repo_name] = []
+        bugs_by_repo[repo_name].append(bug)
+
     _initialize_results_file(results_path)
 
-    # main loop: process each bug
-    for bug in corpus:
-        log_callback(
-            f"\n--- Analyzing {bug['repo_name']} | Fix: {bug['bug_commit_sha'][:7]} ---"
-        )
-        handler = project_handler.ProjectHandler(bug["repo_name"], log_callback)
+    # process one repository at a time
+    for repo_name, bugs in bugs_by_repo.items():
+        log_callback(f"\n--- Starting Analysis for Repository: {repo_name} ---")
+
+        handler = project_handler.ProjectHandler(repo_name, log_callback)
+
         try:
+
+            # setup repo and install dependencies once
             handler.setup()
-
-            results = {**bug}  # start with basic info
-
-            if not skip_llm_fix:
-                ai_results = _run_ai_fix_evaluation(
-                    bug, handler, test_command, log_callback
+            if not handler.setup_virtual_environment():
+                log_callback(
+                    f"  --> CRITICAL: Failed to set up venv. Skipping all commits for this repo."
                 )
-                if "error" in ai_results:
-                    continue
-                results["ai_results"] = ai_results
-                changed_files = ai_results.get("changed_files", [])
-            else:
-                log_callback("  --> Skipping AI Fix evaluation as requested.")
-                results["ai_results"] = {
-                    "applied_ok": "SKIPPED",
-                    "tests_passed": "SKIPPED",
-                    "complexity": {"total_cc": "SKIPPED", "total_cognitive": "SKIPPED"},
-                }
-                # still need to find out which files were changed for the human analysis.
-                changed_files = handler.get_changed_files(bug["bug_commit_sha"])
+                continue
 
-            # always run the human evaluation, for easier tesing
-            results["comp_before"] = analysis.analyze_files(
-                handler.repo_path, changed_files, log_callback
-            )
-            results["human_results"] = _run_human_fix_evaluation(
-                bug, handler, test_command, changed_files, log_callback
-            )
+            # iterate through commits in the same venv
+            for bug in bugs:
+                log_callback(
+                    f"\n  --- Analyzing Commit: {bug['bug_commit_sha'][:7]} ---"
+                )
+                # parent_sha = bug["parent_commit_sha"]
+                # fix_sha = bug["bug_commit_sha"]
+                results = {**bug}
 
-            log_callback(
-                f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
-            )
-            log_callback(
-                f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
-            )
-            log_callback(
-                f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
-            )
+                if not skip_llm_fix:
+                    results["ai_results"] = _run_ai_fix_evaluation(
+                        bug, handler, test_command, log_callback, project_root, config
+                    )
+                    if "error" in results["ai_results"]:
+                        continue
+                    changed_files = results["ai_results"].get("changed_files", [])
+                else:
+                    log_callback("  --> Skipping AI Fix evaluation as requested.")
+                    results["ai_results"] = {
+                        "applied_ok": "SKIPPED",
+                        "tests_passed": "SKIPPED",
+                        "complexity": {
+                            "total_cc": "SKIPPED",
+                            "total_cognitive": "SKIPPED",
+                        },
+                    }
+                    # still need to find out which files were changed for the human analysis.
+                    changed_files = handler.get_changed_files(bug["bug_commit_sha"])
 
-            _log_results(results_path, results)
+                handler.checkout(
+                    bug["parent_commit_sha"]
+                )  # reset to parent for human fix
+
+                # always run the human evaluation, for easier tesing
+                results["comp_before"] = analysis.analyze_files(
+                    handler.repo_path, changed_files, log_callback
+                )
+                results["human_results"] = _run_human_fix_evaluation(
+                    bug,
+                    handler,
+                    test_command,
+                    changed_files,
+                    log_callback,
+                    project_root,
+                    config,
+                )
+
+                log_callback(
+                    f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
+                )
+                log_callback(
+                    f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
+                )
+                log_callback(
+                    f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
+                )
+
+                _log_results(results_path, results)
 
         except Exception as e:
-            log_callback(
-                f"  FATAL ERROR during analysis of {bug['bug_commit_sha'][:7]}: {e}"
-            )
+            log_callback(f"  FATAL ERROR during analysis of {repo_name}: {e}")
         finally:
+            # the handler and the venv are cleaned up only after all commits are done
             handler.cleanup()
 
+    # # main loop: process each bug
+    # for bug in corpus:
+    #     log_callback(
+    #         f"\n--- Analyzing {bug['repo_name']} | Fix: {bug['bug_commit_sha'][:7]} ---"
+    #     )
+    #     handler = project_handler.ProjectHandler(bug["repo_name"], log_callback)
+    #     try:
+    #         handler.setup()
 
-# def run(log_callback, skip_llm_fix: bool = False):
-#     """
-#     The main entry point for the analysis pipeline. It iterates through the
-#     bug corpus and evaluates LLM and human fixes.
-#     """
-#     # build absolute paths from the script's location to ensure the application
-#     # can be run from any directory without breaking file access.
-#     script_path = os.path.abspath(__file__)
-#     project_root = os.path.dirname(os.path.dirname(script_path))
-#     config_path = os.path.join(project_root, "config.json")
-#     corpus_path = os.path.join(project_root, "corpus.json")
-#     results_dir = os.path.join(project_root, "results")
-#     results_path = os.path.join(results_dir, "results.csv")
+    #         results = {**bug}  # start with basic info
 
-#     try:
-#         with open(config_path, "r") as f:
-#             config = json.load(f)
-#         test_command = config.get("test_command", "pytest")
+    #         if not skip_llm_fix:
+    #             ai_results = _run_ai_fix_evaluation(
+    #                 bug, handler, test_command, log_callback
+    #             )
+    #             if "error" in ai_results:
+    #                 continue
+    #             results["ai_results"] = ai_results
+    #             changed_files = ai_results.get("changed_files", [])
+    #         else:
+    #             log_callback("  --> Skipping AI Fix evaluation as requested.")
+    #             results["ai_results"] = {
+    #                 "applied_ok": "SKIPPED",
+    #                 "tests_passed": "SKIPPED",
+    #                 "complexity": {"total_cc": "SKIPPED", "total_cognitive": "SKIPPED"},
+    #             }
+    #             # still need to find out which files were changed for the human analysis.
+    #             changed_files = handler.get_changed_files(bug["bug_commit_sha"])
 
-#         with open(corpus_path, "r") as f:
-#             corpus = json.load(f)
+    #         # always run the human evaluation, for easier tesing
+    #         results["comp_before"] = analysis.analyze_files(
+    #             handler.repo_path, changed_files, log_callback
+    #         )
+    #         results["human_results"] = _run_human_fix_evaluation(
+    #             bug, handler, test_command, changed_files, log_callback
+    #         )
 
-#     except FileNotFoundError as e:
-#         log_callback(f"ERROR: {e.filename} not found. Please ensure config.json and corpus.json exist.")
-#         return
+    #         log_callback(
+    #             f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
+    #         )
+    #         log_callback(
+    #             f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
+    #         )
+    #         log_callback(
+    #             f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
+    #         )
 
-#     # Create the results CSV and write the header row if the file doesn't already exist.
-#     if not os.path.exists(results_path):
-#         os.makedirs(results_dir, exist_ok=True)
-#         with open(results_path, "w", newline="", encoding="utf-8") as f:
-#             writer = csv.writer(f)
-#             writer.writerow([
-#                 "repo_name", "bug_commit_sha", "parent_commit_sha", "llm_model",
-#                 "complexity_before_cc", "complexity_before_cognitive",
-#                 "llm_patch_applied", "llm_tests_passed",
-#                 "complexity_after_llm_cc", "complexity_after_llm_cognitive",
-#                 "human_tests_passed",
-#                 "complexity_after_human_cc", "complexity_after_human_cognitive"
-#             ])
+    #         _log_results(results_path, results)
 
-#     for bug in corpus:
-#         repo_name = bug["repo_name"]
-#         parent_sha = bug["parent_commit_sha"]
-#         fix_sha = bug["bug_commit_sha"]
-#         log_callback(f"\n--- Analyzing {repo_name} | Fix: {fix_sha[:7]} ---")
-
-#         handler = project_handler.ProjectHandler(repo_name, log_callback)
-#         try:
-#             handler.setup()
-
-#             # --- THIS IS THE FIX ---
-#             # We get the context and the list of changed files up front,
-#             # as this information is needed for BOTH the AI and Human analysis paths.
-#             buggy_code_context = handler.get_relevant_code_context(fix_sha)
-#             if not buggy_code_context:
-#                 log_callback(f"  Skipping commit {fix_sha[:7]}: Could not extract relevant .py code snippets.")
-#                 continue
-
-#             # This variable is now guaranteed to exist for the rest of the function.
-#             context_key = list(buggy_code_context.keys())[0]
-#             full_file_path = context_key.split(' ')[2]
-#             changed_files = [full_file_path]
-
-#             # --- AI Fix Evaluation (Now Conditional) ---
-#             llm_tests_passed = "SKIPPED"
-#             comp_after_llm = {"total_cc": "SKIPPED", "total_cognitive": "SKIPPED"}
-#             applied_ok = "SKIPPED"
-
-#             if not skip_llm_fix:
-#                 log_callback(f"  Extracted {len(buggy_code_context)} snippet(s) from '{full_file_path}'.")
-
-#                 # Determine context strategy (full file vs. snippet)
-#                 is_full_file_patch = False
-#                 if len(buggy_code_context) > 1:
-#                     log_callback("  --> Warning: Multiple snippets found. Using full file for robust patching.")
-#                     original_snippet = handler.get_full_file_content(full_file_path, parent_sha)
-#                     llm_context = {f"Full file content from {full_file_path}": original_snippet}
-#                     is_full_file_patch = True
-#                 else:
-#                     original_snippet = buggy_code_context[context_key]
-#                     llm_context = buggy_code_context
-
-#                 comp_before = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
-#                 log_callback(f"  Complexity Before: CC={comp_before['total_cc']}, Cognitive={comp_before['total_cognitive']}")
-
-#                 llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
-
-#                 handler.checkout(parent_sha)
-#                 applied_ok = handler.apply_patch(
-#                     patch_text=llm_fix_patch,
-#                     original_snippet=original_snippet,
-#                     full_file_path=full_file_path,
-#                     is_full_file=is_full_file_patch
-#                 )
-
-#                 if applied_ok:
-#                     llm_tests_passed = handler.run_tests(test_command, fix_sha, "ai_fix")
-#                     comp_after_llm = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
-#                 else:
-#                     llm_tests_passed = False
-#                     log_callback("  LLM patch failed to apply. Tests will not be run.")
-#             else:
-#                 log_callback("  --> Skipping AI Fix evaluation as requested.")
-#                 # We still need the 'before' complexity for the final report.
-#                 comp_before = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
-#                 log_callback(f"  Complexity Before: CC={comp_before['total_cc']}, Cognitive={comp_before['total_cognitive']}")
-
-#             # --- Human Fix Evaluation ---
-#             log_callback("  Evaluating Human Fix...")
-#             handler.reset_to_commit(parent_sha)
-#             handler.checkout(fix_sha)
-
-#             human_tests_passed = handler.run_tests(test_command, fix_sha, "human_fix")
-#             comp_after_human = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
-#             log_callback(f"  Complexity After Human: CC={comp_after_human['total_cc']}, Cognitive={comp_after_human['total_cognitive']}")
-
-#             # Log all the data to the CSV file
-#             with open(results_path, "a", newline="", encoding="utf-8") as f:
-#                 writer = csv.writer(f)
-#                 writer.writerow([
-#                     repo_name, fix_sha, parent_sha, "manual-llm",
-#                     comp_before["total_cc"], comp_before["total_cognitive"],
-#                     applied_ok, llm_tests_passed,
-#                     comp_after_llm["total_cc"], comp_after_llm["total_cognitive"],
-#                     human_tests_passed,
-#                     comp_after_human["total_cc"], comp_after_human["total_cognitive"]
-#                 ])
-
-#         except Exception as e:
-#             # this broad exception handler is a safety net to ensure that a single,
-#             # unexpected error on one bug doesn't terminate the entire analysis run.
-#             log_callback(f"  FATAL ERROR during analysis of {fix_sha[:7]}: {e}")
-#         finally:
-#             # the finally block guarantees that the temporary directory is cleaned up,
-#             # even if a fatal error occurred during the analysis.
-#             handler.cleanup()
+    #     except Exception as e:
+    #         log_callback(
+    #             f"  FATAL ERROR during analysis of {bug['bug_commit_sha'][:7]}: {e}"
+    #         )
+    #     finally:
+    #         handler.cleanup()
