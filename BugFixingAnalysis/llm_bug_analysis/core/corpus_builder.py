@@ -117,41 +117,53 @@ def _load_configuration(log_callback) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _fetch_issue_data(commit_message, repo, log_callback) -> Dict[str, str]:
-    """Finds and fetches data for a GitHub issue referenced in a commit message."""
-    issue_data = {"issue_title": "N/A", "issue_body": "No issue referenced."}
+def _fetch_issue_data(commit_message, repo, log_callback) -> Optional[Dict[str, Any]]:
+    """
+    Finds and fetches data for a GitHub issue referenced in a commit message.
+    Returns the issue data dictionary if successful, otherwise returns None.
+    """
+
     match = re.search(r"#(\d+)", commit_message)
-    if match:
-        issue_number = int(match.group(1))
-        try:
-            issue = repo.get_issue(number=issue_number)
-            issue_data["issue_title"] = issue.title
-            issue_data["issue_body"] = issue.body
-            log_callback(
-                f"    --> Found referenced issue #{issue_number}: {issue.title}"
-            )
-        except GithubException:
-            log_callback(
-                f"    --> Could not fetch issue #{issue_number} (it might be a PR)."
-            )
-    return issue_data
+    if not match:
+        return None
+
+    issue_number = int(match.group(1))
+    try:
+        issue = repo.get_issue(number=issue_number)
+        log_callback(f"    --> Found referenced issue #{issue_number}: {issue.title}")
+        return {
+            "issue_title": issue.title,
+            "issue_body": issue.body
+            or "No issue body provided.",  # Handle empty bodies
+        }
+    except GithubException:
+        # if no issue can be fetched, then the commit can't be used for a fair test
+        log_callback(
+            f"    --> Could not fetch issue #{issue_number} (it might be a PR or private). Skipping."
+        )
+        return None
 
 
 def _process_commit(commit, repo, keywords, log_callback) -> Optional[Dict[str, Any]]:
     """
     Analyzes a single commit to determine if it's a valid, scannable bug fix.
-    If it is, returns a dictionary of its data; otherwise, returns None.
+    A commit is only valid if it's linked to a real, fetchable GitHub Issue.
     """
-    # skip merges
+    # filter 1: skip merges
     if len(commit.parents) != 1:
         return None
 
-    # use filter keywords from config
+    # filter 2: keywords from config
     commit_message = commit.commit.message
     if not any(keyword in commit_message.lower() for keyword in keywords):
         return None
 
-    # only interested in .py files
+    # filter 3: commit must be linked to a real issue
+    issue_data = _fetch_issue_data(commit_message, repo, log_callback)
+    if not issue_data:
+        return None  # no issue data means invalid commit for the experiment
+
+    # filter 4: only interested in .py files
     py_files_changed = [f for f in commit.files if f.filename.endswith(".py")]
     if not py_files_changed:
         return None
@@ -168,9 +180,7 @@ def _process_commit(commit, repo, keywords, log_callback) -> Optional[Dict[str, 
         )
         return None
 
-    # if all filters passed, go
-    issue_data = _fetch_issue_data(commit_message, repo, log_callback)
-
+    # if all filters passed, that means a valid data point
     return {
         "repo_name": repo.full_name,
         "bug_commit_sha": commit.sha,

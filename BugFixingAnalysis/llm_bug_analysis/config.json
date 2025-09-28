@@ -1,5 +1,10 @@
 {
   "repositories": [
+    "https://github.com/mahmoud/boltons",
+    "https://github.com/python-attrs/attrs",
+    "https://github.com/Textualize/rich",
+    "https://github.com/arrow-py/arrow",
+    "https://github.com/pallets/click",
     "https://github.com/Delgan/loguru"
   ],
   "stashed_repositories": [
@@ -7,7 +12,8 @@
     "https://github.com/python-attrs/attrs",
     "https://github.com/Textualize/rich",
     "https://github.com/arrow-py/arrow",
-    "https://github.com/pallets/click"
+    "https://github.com/pallets/click",
+    "https://github.com/Delgan/loguru"
   ],
   "commit_keywords": [
     "fix",
@@ -28,7 +34,7 @@
     "close"
   ],
   "test_command": "pytest",
-  "max_commits_per_repo": 3,
+  "max_commits_per_repo": 5,
   "test_exclusions": {
     "Delgan/loguru": {
       "ignore_paths": [
