@@ -29,13 +29,19 @@
   ],
   "test_command": "pytest",
   "max_commits_per_repo": 3,
-  "ignore_tests": {
-    "Delgan/loguru": [
-      "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[True]",
-      "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[False]",
-      "tests/test_filesink_rotation.py::test_time_rotation_reopening_native[False]",
-      "tests/typesafety",
-      "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_oserror[False]"
-    ]
+  "test_exclusions": {
+    "Delgan/loguru": {
+      "ignore_paths": [
+        "tests/typesafety/test_logger.yml"
+      ],
+      "deselect_nodes": [
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[True]",
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_attributeerror[False]",
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_native[False]",
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_oserror[False]",
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_oserror[True]",
+        "tests/test_filesink_rotation.py::test_time_rotation_reopening_native[True]"
+      ]
+    }
   }
 }

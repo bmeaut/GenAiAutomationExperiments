@@ -292,15 +292,13 @@ class ProjectHandler:
             "  --> Warning: No dependency installation method found."
         )  # Allow to proceed even if no deps, tests might still run
 
-    def run_tests_in_venv(self, test_command: str) -> subprocess.CompletedProcess:
+    def run_tests_in_venv(self, test_command: list[str]) -> subprocess.CompletedProcess:
         """Runs a command inside the already-built virtual environment."""
         self.log(
             f"  Running test suite with command: '{test_command}' (runner: {self.project_type})"
         )
 
-        return self._execute_in_venv(
-            test_command.split(), project_type=self.project_type
-        )
+        return self._execute_in_venv(test_command, project_type=self.project_type)
 
     def _find_requirements_file(self) -> Optional[str]:
         patterns = [

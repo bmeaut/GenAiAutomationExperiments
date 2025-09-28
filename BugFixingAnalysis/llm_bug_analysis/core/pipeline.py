@@ -101,16 +101,26 @@ def _run_ai_fix_evaluation(
         is_full_file=is_full_file_patch,
     )
 
-    ignore_list = config.get("ignore_tests", {}).get(bug["repo_name"], [])
-    full_test_command = test_command
+    full_test_command_list = test_command.split()
+
+    exclusions = config.get("test_exclusions", {}).get(bug["repo_name"], {})
+
+    ignore_list = exclusions.get("ignore_paths", [])
+    full_test_command_list = test_command.split()
     if ignore_list:
         log_callback(f"    --> Ignoring {len(ignore_list)} known flaky test(s).")
-        for test_to_ignore in ignore_list:
-            full_test_command += f" --ignore {test_to_ignore}"
+        for test_to_deselect in ignore_list:
+            full_test_command_list.extend(["--ignore", test_to_deselect])
+
+    deselect_list = exclusions.get("deselect_nodes", [])
+    if deselect_list:
+        log_callback(f"    --> Deselecting {len(deselect_list)} test(s) as configured.")
+        for path_to_ignore in deselect_list:
+            full_test_command_list.extend(["--deselect", path_to_ignore])
 
     tests_passed = False
     try:
-        result = handler.run_tests_in_venv(full_test_command)
+        result = handler.run_tests_in_venv(full_test_command_list)
         tests_passed = True
         summary_line = "No summary line found."
         for line in result.stdout.splitlines():
@@ -154,19 +164,27 @@ def _run_human_fix_evaluation(
     handler.reset_to_commit(bug["parent_commit_sha"])
     handler.checkout(bug["bug_commit_sha"])
 
-    ignore_list = config.get("ignore_tests", {}).get(bug["repo_name"], [])
-    full_test_command = test_command
+    full_test_command_list = test_command.split()
+
+    exclusions = config.get("test_exclusions", {}).get(bug["repo_name"], {})
+
+    ignore_list = exclusions.get("ignore_paths", [])
+    full_test_command_list = test_command.split()
     if ignore_list:
-        log_callback(
-            f"    --> Ignoring {len(ignore_list)} known flaky test(s) for human fix."
-        )
-        for test_to_ignore in ignore_list:
-            full_test_command += f" --ignore {test_to_ignore}"
+        log_callback(f"    --> Ignoring {len(ignore_list)} known flaky test(s).")
+        for test_to_deselect in ignore_list:
+            full_test_command_list.extend(["--ignore", test_to_deselect])
+
+    deselect_list = exclusions.get("deselect_nodes", [])
+    if deselect_list:
+        log_callback(f"    --> Deselecting {len(deselect_list)} test(s) as configured.")
+        for path_to_ignore in deselect_list:
+            full_test_command_list.extend(["--deselect", path_to_ignore])
 
     tests_passed = False
     try:
 
-        result = handler.run_tests_in_venv(full_test_command)
+        result = handler.run_tests_in_venv(full_test_command_list)
         tests_passed = True
         summary_line = "No summary line found."
         for line in result.stdout.splitlines():
