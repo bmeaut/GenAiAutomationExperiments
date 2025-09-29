@@ -6,6 +6,18 @@ from typing import Optional
 from core import corpus_builder, pipeline, cleanup_manager
 
 
+# ANSI color codes for terminal
+class ANSI:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    GRAY = "\033[90m"
+
+
 class Application(tk.Frame):
     """
     The main GUI for the LLM Bug Analysis Framework.
@@ -19,6 +31,16 @@ class Application(tk.Frame):
 
         self.pack(pady=20, padx=20, fill="both", expand=True)
         self.create_widgets()
+
+        # Tkinter tags for GUI log text coloring
+
+        self.log_text.tag_config("SUCCESS", foreground="#2E8B57")
+        self.log_text.tag_config("ERROR", foreground="#B22222")
+        self.log_text.tag_config("WARNING", foreground="#DAA520")
+        self.log_text.tag_config("HEADING", foreground="#4682B4")
+        self.log_text.tag_config("INFO", foreground="black")
+        self.log_text.tag_config("DEBUG", foreground="gray50")
+
         self.load_config()
 
     def create_widgets(self):
@@ -138,13 +160,56 @@ class Application(tk.Frame):
             json.dump(config_data, f, indent=2)
 
     def log(self, message: str):
-        def _update_log():
-            self.log_text.config(state="normal")
-            self.log_text.insert(tk.END, message + "\n")
-            self.log_text.config(state="disabled")
-            self.log_text.see(tk.END)  # auto-scroll to the end
+        """
+        Analyzes message to determine log level, then prints
+        a colored, tagged version into the GUI log box.
+        """
+        tag = "INFO"
+        console_color = ANSI.RESET
 
-        self.winfo_toplevel().after(0, _update_log)
+        stripped_message = message.lstrip()
+
+        if (
+            "FATAL ERROR" in stripped_message
+            or "CRITICAL FAILURE" in stripped_message
+            or "FAILED" in stripped_message
+        ):
+            tag = "ERROR"
+            console_color = ANSI.RED
+        elif "Tests PASSED" in stripped_message or "--> Success" in stripped_message:
+            tag = "SUCCESS"
+            console_color = ANSI.GREEN
+        elif "Warning:" in stripped_message:
+            tag = "WARNING"
+            console_color = ANSI.YELLOW
+        elif stripped_message.startswith("---"):
+            tag = "HEADING"
+            console_color = ANSI.BLUE
+        elif "[DEBUG]" in stripped_message:
+            tag = "DEBUG"
+            console_color = ANSI.GRAY
+        else:
+            tag = "INFO"
+            console_color = ANSI.RESET
+
+        # debug for GUI issues
+        print(f"{console_color}{message}{ANSI.RESET}")
+
+        def _update_gui_log(msg, tag_to_apply):
+            self.log_text.config(state="normal")
+            self.log_text.insert(tk.END, msg + "\n", tag_to_apply)
+            self.log_text.config(state="disabled")
+            self.log_text.see(tk.END)
+
+        self.master.after(0, lambda: _update_gui_log(message, tag))
+
+        # def _update_log():
+        #     self.log_text.config(state="normal")
+        #     self.log_text.insert(tk.END, message + "\n")
+        #     self.log_text.config(state="disabled")
+        #     self.log_text.see(tk.END)  # auto-scroll to the end
+
+        # self.winfo_toplevel().after(0, _update_log)
 
     def run_corpus_builder(self):
         self.log("Starting corpus builder...")
