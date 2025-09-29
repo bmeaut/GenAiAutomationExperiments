@@ -12,30 +12,33 @@ def _extract_diff_from_response(response_text):
 
 def generate_fix_manually(bug_data, code_context_snippets):
     """
-    Orchestrates a robust, file-based manual workflow.
+    File-based interaction for manual LLM input (while I figure out API and Agent access).
     """
     script_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(script_path))
     prompt_file_path = os.path.join(project_root, "prompt_for_llm.txt")
     response_file_path = os.path.join(project_root, "llm_response.txt")
 
-    # Clean up any old response file
+    # clean up old response
     if os.path.exists(response_file_path):
         os.remove(response_file_path)
 
-    # Construct and save the prompt
+    # construct prompt
     prompt_template_path = os.path.join(project_root, "prompts", "generate_fix.txt")
-    with open(prompt_template_path, "r") as f:
-        prompt_template = f.read()
+    try:
+        with open(prompt_template_path, "r") as f:
+            prompt_template = f.read()
+    except FileNotFoundError:
+        print(f"ERROR: Prompt template file not found at {prompt_template_path}")
+        prompt_template = ""
 
     code_context = ""
     for context_key, snippet in code_context_snippets.items():
         code_context += f"\n--- {context_key} ---\n```python\n{snippet}\n```\n"
 
-    # Populate the new placeholders in the template.
+    # fill out prompt
     full_prompt = prompt_template.format(
         issue_title=bug_data.get("issue_title", "N/A"),
-        commit_message=bug_data.get("commit_message", "N/A"),
         issue_body=bug_data.get("issue_body", "No issue body provided."),
         code_context=code_context,
     )
@@ -43,7 +46,7 @@ def generate_fix_manually(bug_data, code_context_snippets):
     with open(prompt_file_path, "w", encoding="utf-8") as f:
         f.write(full_prompt)
 
-    # --- Instruct the user and wait for the response file ---
+    # manual step instructions
     print("\n" + "=" * 60)
     print("ACTION REQUIRED: FILE-BASED LLM INTERACTION")
     print("=" * 60)

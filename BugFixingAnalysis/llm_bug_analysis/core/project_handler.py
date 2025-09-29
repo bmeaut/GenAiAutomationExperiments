@@ -174,6 +174,39 @@ class ProjectHandler:
 
         cleanup_manager.register_temp_dir(self.repo_path)
 
+    def get_human_patch(self, fix_commit_sha: str, file_path: str) -> str:
+        """Gets the raw diff/patch string for the human's fix of a specific file."""
+        if not self.repo:
+            return ""
+
+        try:
+            commit: GitCommit = self.repo.commit(fix_commit_sha)
+            parent: GitCommit = commit.parents[0]
+
+            # find modified file
+            diffs = parent.diff(commit, paths=[file_path], create_patch=True)
+
+            for diff in diffs:
+                patch_content = diff.diff
+
+                if patch_content:
+                    return (
+                        bytes(patch_content).decode("utf-8", "ignore")
+                        if isinstance(patch_content, (bytes, bytearray, memoryview))
+                        else patch_content
+                    )
+                else:
+                    self.log(f"    Warning: No patch content found for {file_path}.")
+                    return ""  # diff object exists but empty
+
+            return ""  # diff iterator empty
+
+        except Exception as e:
+            self.log(
+                f"    Warning: Could not get human patch for {file_path}. Reason: {e}"
+            )
+            return ""
+
     def setup_virtual_environment(self) -> bool:
         """
         Creates and installs all dependencies into a single, persistent venv

@@ -4,6 +4,23 @@ import os
 from . import project_handler, analysis, llm_manager
 from typing import Callable, Dict, Any
 import subprocess
+import datetime
+
+
+def _analyze_patch(patch_text: str) -> Dict[str, int]:
+    """Parses a diff/patch string to count changed lines"""
+    added = 0
+    deleted = 0
+
+    for line in patch_text.splitlines():
+        stripped_line = line.strip()
+
+        if stripped_line.startswith("+") and not stripped_line.startswith("+++"):
+            added += 1
+        elif stripped_line.startswith("-") and not stripped_line.startswith("---"):
+            deleted += 1
+
+    return {"lines_added": added, "lines_deleted": deleted, "total": added + deleted}
 
 
 def _initialize_results_file(path: str):
@@ -14,17 +31,27 @@ def _initialize_results_file(path: str):
             writer = csv.writer(f)
             writer.writerow(
                 [
+                    "timestamp",
                     "repo_name",
                     "bug_commit_sha",
-                    "parent_commit_sha",
+                    "file_path",
+                    "commit_message",
+                    "issue_title",
+                    "issue_body",
                     "llm_model",
                     "complexity_before_cc",
                     "complexity_before_cognitive",
                     "llm_patch_applied",
                     "llm_tests_passed",
+                    "ai_lines_added",
+                    "ai_lines_deleted",
+                    "ai_total_diff",
                     "complexity_after_llm_cc",
                     "complexity_after_llm_cognitive",
                     "human_tests_passed",
+                    "human_lines_added",
+                    "human_lines_deleted",
+                    "human_total_diff",
                     "complexity_after_human_cc",
                     "complexity_after_human_cognitive",
                 ]
@@ -93,6 +120,11 @@ def _run_ai_fix_evaluation(
 
     llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
 
+    ai_patch_stats = _analyze_patch(llm_fix_patch)
+    log_callback(
+        f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
+    )
+
     handler.checkout(parent_sha)
     applied_ok = handler.apply_patch(
         patch_text=llm_fix_patch,
@@ -146,6 +178,7 @@ def _run_ai_fix_evaluation(
         "tests_passed": tests_passed,
         "complexity": comp_after_llm,
         "changed_files": [full_file_path],
+        "patch_stats": ai_patch_stats,
     }
 
 
@@ -163,6 +196,12 @@ def _run_human_fix_evaluation(
 
     handler.reset_to_commit(bug["parent_commit_sha"])
     handler.checkout(bug["bug_commit_sha"])
+
+    human_patch_text = handler.get_human_patch(bug["bug_commit_sha"], changed_files[0])
+    human_patch_stats = _analyze_patch(human_patch_text)
+    log_callback(
+        f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
+    )
 
     full_test_command_list = test_command.split()
 
@@ -202,32 +241,50 @@ def _run_human_fix_evaluation(
 
     complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
 
-    return {"tests_passed": tests_passed, "complexity": complexity}
+    return {
+        "tests_passed": tests_passed,
+        "complexity": complexity,
+        "patch_stats": human_patch_stats,
+    }
 
 
 def _log_results(results_path: str, bug_data: Dict[str, Any]):
     """Appends a single row of results to the CSV file."""
     with open(results_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
+
+        ai_results = bug_data.get("ai_results", {})
+        human_results = bug_data.get("human_results", {})
+        comp_before = bug_data.get("comp_before", {})
+        ai_stats = ai_results.get("patch_stats", {})
+        human_stats = human_results.get("patch_stats", {})
+        ai_comp = ai_results.get("complexity", {})
+        human_comp = human_results.get("complexity", {})
+
         writer.writerow(
             [
+                datetime.datetime.now().isoformat(),  # timestamp
                 bug_data.get("repo_name"),
                 bug_data.get("bug_commit_sha"),
-                bug_data.get("parent_commit_sha"),
-                "manual-llm",
-                bug_data.get("comp_before", {}).get("total_cc"),
-                bug_data.get("comp_before", {}).get("total_cognitive"),
-                bug_data.get("ai_results", {}).get("applied_ok"),
-                bug_data.get("ai_results", {}).get("tests_passed"),
-                bug_data.get("ai_results", {}).get("complexity", {}).get("total_cc"),
-                bug_data.get("ai_results", {})
-                .get("complexity", {})
-                .get("total_cognitive"),
-                bug_data.get("human_results", {}).get("tests_passed"),
-                bug_data.get("human_results", {}).get("complexity", {}).get("total_cc"),
-                bug_data.get("human_results", {})
-                .get("complexity", {})
-                .get("total_cognitive"),
+                ai_results.get("changed_files", ["N/A"])[0],
+                bug_data.get("commit_message"),
+                bug_data.get("issue_title"),
+                bug_data.get("issue_body"),
+                comp_before.get("total_cc"),
+                comp_before.get("total_cognitive"),
+                ai_results.get("applied_ok"),
+                ai_results.get("tests_passed"),
+                ai_stats.get("lines_added", "SKIPPED"),
+                ai_stats.get("lines_deleted", "SKIPPED"),
+                ai_stats.get("total", "SKIPPED"),
+                ai_comp.get("total_cc"),
+                ai_comp.get("total_cognitive"),
+                human_results.get("tests_passed"),
+                human_stats.get("lines_added", "SKIPPED"),
+                human_stats.get("lines_deleted", "SKIPPED"),
+                human_stats.get("total", "SKIPPED"),
+                human_comp.get("total_cc"),
+                human_comp.get("total_cognitive"),
             ]
         )
 
