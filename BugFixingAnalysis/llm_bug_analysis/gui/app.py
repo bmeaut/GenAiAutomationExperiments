@@ -28,6 +28,10 @@ class Application(tk.Frame):
         super().__init__(master)
 
         self.skip_llm_var = tk.BooleanVar(value=False)
+        # status bar
+        self.status_var = tk.StringVar(value="Idle")
+
+        self.corpus_data = []
 
         self.pack(pady=20, padx=20, fill="both", expand=True)
         self.create_widgets()
@@ -73,9 +77,9 @@ class Application(tk.Frame):
             variable=self.skip_llm_var,
         ).pack(side="left")
 
-        tk.Button(
-            options_frame, text="Clean Cache", command=self.clean_cache, fg="red"
-        ).pack(side="right")
+        tk.Button(options_frame, text="Clear Log", command=self.clear_log).pack(
+            side="right"
+        )
 
         # frame to hold main buttons
         actions_frame = tk.Frame(control_frame)
@@ -88,6 +92,19 @@ class Application(tk.Frame):
             actions_frame, text="2. Run Analysis Pipeline", command=self.run_pipeline
         ).pack(fill="x")
 
+        # corpus viewer and single run
+        corpus_frame = tk.LabelFrame(self, text="Bug Corpus")
+        corpus_frame.pack(fill="both", expand=True, pady=5)
+
+        self.corpus_listbox = tk.Listbox(corpus_frame, height=8)
+        self.corpus_listbox.pack(side="left", fill="both", expand=True)
+
+        corpus_controls_frame = tk.Frame(corpus_frame)
+        tk.Button(
+            corpus_controls_frame, text="Run Selected", command=self.run_selected_commit
+        ).pack(fill="x", pady=2)
+        corpus_controls_frame.pack(side="right", fill="y", padx=5)
+
         # log viewer section
         log_frame = tk.LabelFrame(self, text="Logs")
         log_frame.pack(fill="both", expand=True, pady=5)
@@ -96,21 +113,17 @@ class Application(tk.Frame):
         )
         self.log_text.pack(fill="both", expand=True)
 
-    def clean_cache(self):
-        """
-        Asks the user for confirmation and then clears the venv_cache
-        directory in a separate thread.
-        """
-        # ask for confirmation
-        if messagebox.askyesno(
-            "Confirm Cache Deletion",
-            "Are you sure you want to delete the entire venv cache?\n"
-            "This will force all dependencies to be re-installed on the next run.",
-        ):
-            # run deletion in a separate thread to not block GUI
-            threading.Thread(
-                target=cleanup_manager.clear_venv_cache, args=(self.log,), daemon=True
-            ).start()
+        status_bar = tk.Label(
+            self, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W
+        )
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def clear_log(self):
+        """Clears all text from the log viewer widget."""
+        # widget must be made 'normal' to modify it, then 'disabled' again.
+        self.log_text.config(state="normal")
+        self.log_text.delete("1.0", tk.END)  # '1.0' means line 1, character 0
+        self.log_text.config(state="disabled")
 
     def add_repo(self):
         repo_name = simpledialog.askstring(
@@ -159,6 +172,11 @@ class Application(tk.Frame):
         with open("config.json", "w") as f:
             json.dump(config_data, f, indent=2)
 
+    def set_status(self, message: str):
+        """Updates the status bar's text."""
+        # after: ensures the GUI update happens on the main thread
+        self.master.after(0, lambda: self.status_var.set(message))
+
     def log(self, message: str):
         """
         Analyzes message to determine log level, then prints
@@ -176,13 +194,20 @@ class Application(tk.Frame):
         ):
             tag = "ERROR"
             console_color = ANSI.RED
-        elif "Tests PASSED" in stripped_message or "--> Success" in stripped_message:
+        elif (
+            "Tests PASSED" in stripped_message
+            or "--> Success" in stripped_message
+            or "Found FUNCTIONAL fix" in stripped_message
+        ):
             tag = "SUCCESS"
             console_color = ANSI.GREEN
         elif "Warning:" in stripped_message:
             tag = "WARNING"
             console_color = ANSI.YELLOW
-        elif stripped_message.startswith("---"):
+        elif (
+            stripped_message.startswith("---")
+            or "Processing repository:" in stripped_message
+        ):
             tag = "HEADING"
             console_color = ANSI.BLUE
         elif "[DEBUG]" in stripped_message:
@@ -212,10 +237,59 @@ class Application(tk.Frame):
         # self.winfo_toplevel().after(0, _update_log)
 
     def run_corpus_builder(self):
-        self.log("Starting corpus builder...")
-        threading.Thread(
-            target=corpus_builder.build, args=(self.log,), daemon=True
-        ).start()
+        self.set_status("Busy: Building bug corpus...")
+
+        def _build_and_update_status():
+            corpus_builder.build(self.log)
+            # This will run after the build is complete.
+            self.load_corpus_to_gui()
+            self.set_status("Idle")
+
+        threading.Thread(target=_build_and_update_status, daemon=True).start()
+
+    def load_corpus_to_gui(self):
+        """Loads corpus.json data and populates the listbox."""
+        self.corpus_listbox.delete(0, tk.END)
+        self.corpus_data = []
+        try:
+            with open("corpus.json", "r") as f:
+                self.corpus_data = json.load(f)
+
+            for i, bug in enumerate(self.corpus_data):
+                display_text = (
+                    f"{i+1:03d}: {bug['repo_name']} - {bug['commit_message']}"
+                )
+                self.corpus_listbox.insert(tk.END, display_text)
+            self.log(
+                f"Successfully loaded {len(self.corpus_data)} bugs into the corpus viewer."
+            )
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.log("Could not load corpus.json. Please build the corpus.")
+
+    def run_selected_commit(self):
+        """Runs the analysis pipeline for only the selected commit."""
+        selected_indices = self.corpus_listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning(
+                "No Selection", "Please select a commit from the corpus list to run."
+            )
+            return
+
+        selected_index = selected_indices[0]
+        selected_bug_data = self.corpus_data[selected_index]
+
+        skip_llm_fix = self.skip_llm_var.get()
+        if skip_llm_fix:
+            self.set_status(f"Busy: Running single commit (Dry Run)...")
+        else:
+            self.set_status(f"Busy: Running single commit (Full Run)...")
+
+        def _run_and_update_status():
+
+            pipeline.run(self.log, skip_llm_fix, single_bug_data=selected_bug_data)
+            self.set_status("Idle")
+
+        threading.Thread(target=_run_and_update_status, daemon=True).start()
 
     def run_pipeline(self):
         try:
@@ -237,13 +311,15 @@ class Application(tk.Frame):
 
         skip_llm_fix = self.skip_llm_var.get()
 
-        if skip_llm_fix:
-            self.log("Starting analysis pipeline in DRY RUN mode (skipping LLM fix)...")
+        if self.skip_llm_var.get():
+            self.set_status("Busy: Running analysis pipeline (Dry Run)...")
         else:
-            self.log("Starting analysis pipeline in FULL mode...")
+            self.set_status("Busy: Running analysis pipeline (Full Run)...")
 
-        threading.Thread(
-            target=pipeline.run,
-            args=(self.log, skip_llm_fix),
-            daemon=False,  # don't terminate with the GUI instantly
-        ).start()
+        def _run_and_update_status():
+            skip_llm_fix = self.skip_llm_var.get()
+            pipeline.run(self.log, skip_llm_fix)
+            # will run after pipeline is complete
+            self.set_status("Idle")
+
+        threading.Thread(target=_run_and_update_status, daemon=True).start()

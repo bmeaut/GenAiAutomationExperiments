@@ -350,8 +350,28 @@ class ProjectHandler:
         return None
 
     def setup(self):
+        """
+        Clones the full, complete repository into the temporary directory.
+        The '--no-shallow' flag is critical to have the entire
+        commit history available for analysis.
+        """
         self.log(f"  Cloning {self.repo_url} into {self.repo_path}")
         self.repo = Repo.clone_from(self.repo_url, self.repo_path)
+
+        self.log("  --> Ensuring full commit history is available...")
+        try:
+            self.repo.git.fetch("--unshallow")
+            self.log("  --> Full history fetched successfully.")
+        except git.GitCommandError as e:
+            # already full clone?
+            if (
+                "fatal: --unshallow on a complete repository does not make sense"
+                in e.stderr
+            ):
+                self.log("  --> Repository was already a full clone. Continuing.")
+            else:
+                # # different error
+                raise e
 
     def checkout(self, commit_sha: str):
         if self.repo:
