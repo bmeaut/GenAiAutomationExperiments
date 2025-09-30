@@ -171,36 +171,37 @@ class ProjectHandler:
 
         cleanup_manager.register_temp_dir(self.repo_path)
 
-    def get_human_patch(self, fix_commit_sha: str, file_path: str) -> str:
+    def get_human_patch(self, fix_commit_sha: str) -> str:
         """Gets the raw diff/patch string for the human's fix of a specific file."""
         if not self.repo:
             return ""
 
         try:
             commit: GitCommit = self.repo.commit(fix_commit_sha)
+            if not commit.parents:
+                return ""
             parent: GitCommit = commit.parents[0]
 
             # find modified file
-            diffs = parent.diff(commit, paths=[file_path], create_patch=True)
+            diffs = parent.diff(commit, create_patch=True)
 
-            for diff in diffs:
-                patch_content = diff.diff
+            patch_parts = []
+            for diff_item in diffs:
+                patch_content = diff_item.diff
 
                 if patch_content:
-                    return (
+                    patch_text = (
                         bytes(patch_content).decode("utf-8", "ignore")
                         if isinstance(patch_content, (bytes, bytearray, memoryview))
-                        else patch_content
+                        else str(patch_content)
                     )
-                else:
-                    self.log(f"    Warning: No patch content found for {file_path}.")
-                    return ""  # diff object exists but empty
+                    patch_parts.append(patch_text)
 
-            return ""  # diff iterator empty
+            return "\n".join(patch_parts)
 
         except Exception as e:
             self.log(
-                f"    Warning: Could not get human patch for {file_path}. Reason: {e}"
+                f"    Warning: Could not get human patch for {fix_commit_sha[:7]}. Reason: {e}"
             )
             return ""
 
@@ -322,13 +323,15 @@ class ProjectHandler:
             "  --> Warning: No dependency installation method found."
         )  # Allow to proceed even if no deps, tests might still run
 
-    def run_tests_in_venv(self, test_command: list[str]) -> subprocess.CompletedProcess:
+    def run_tests_in_venv(
+        self, command_parts: list[str]
+    ) -> subprocess.CompletedProcess:
         """Runs a command inside the already-built virtual environment."""
         self.log(
-            f"  Running test suite with command: '{test_command}' (runner: {self.project_type})"
+            f"  Running test suite with command: '{' '.join(command_parts)}' (runner: {self.project_type})"
         )
 
-        return self._execute_in_venv(test_command, project_type=self.project_type)
+        return self._execute_in_venv(command_parts, project_type=self.project_type)
 
     def _find_requirements_file(self) -> Optional[str]:
         patterns = [
@@ -390,24 +393,40 @@ class ProjectHandler:
     def apply_patch(
         self,
         patch_text: str,
-        original_snippet: str,
-        full_file_path: str,
-        is_full_file: bool,
     ) -> bool:
-        """A wrapper that calls the helper function to apply a patch."""
-        # also trying out ternary conditional operator [inline if-else]
-        return (
-            _apply_llm_patch(
-                self.repo,
-                patch_text,
-                original_snippet,
-                full_file_path,
-                is_full_file,
-                self.log,
-            )
-            if self.repo
-            else False
-        )
+        """
+        Applies a standard, potentially multi-file diff patch
+        directly to the repository using 'git apply'.
+        """
+        if not self.repo:
+            self.log("  ERROR: Repository not initialized.")
+            return False
+        if not patch_text:
+            self.log("  ERROR: Empty patch provided.")
+            return False
+
+        patch_file_path = os.path.join(self.repo_path, "llm.patch")
+        with open(patch_file_path, "w", encoding="utf-8") as f:
+            f.write(patch_text)
+
+        try:
+            # '--check' will test if the patch can be applied cleanly
+            self.log("  Checking if patch can be applied cleanly...")
+            self.repo.git.apply(["--check", patch_file_path])
+
+            # if the check passes, apply the patch for real
+            self.log("  --> Patch is valid. Applying now...")
+            self.repo.git.apply(patch_file_path)
+            self.log("  --> Patch applied successfully.")
+            return True
+
+        except git.GitCommandError as e:
+            self.log(f"  --> FAILED to apply patch. Git stderr: {e.stderr}")
+            return False
+
+        finally:
+            if os.path.exists(patch_file_path):
+                os.remove(patch_file_path)
 
     def _execute_in_venv(
         self,

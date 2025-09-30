@@ -131,113 +131,113 @@ def _run_tests_with_exclusions(
         return False
 
 
-def _run_ai_fix_evaluation(
-    bug: Dict[str, Any], handler: project_handler.ProjectHandler, log_callback: Callable
-) -> Dict[str, Any]:
-    """Gets and applies the LLM's fix"""
+# def _run_ai_fix_evaluation(
+#     bug: Dict[str, Any], handler: project_handler.ProjectHandler, log_callback: Callable
+# ) -> Dict[str, Any]:
+#     """Gets and applies the LLM's fix"""
 
-    log_callback("  Evaluating AI Fix...")
+#     log_callback("  Evaluating AI Fix...")
 
-    parent_sha = bug["parent_commit_sha"]
-    fix_sha = bug["bug_commit_sha"]
+#     parent_sha = bug["parent_commit_sha"]
+#     fix_sha = bug["bug_commit_sha"]
 
-    buggy_code_context = handler.get_relevant_code_context(fix_sha)
-    if not buggy_code_context:
-        log_callback("  --> Skipping: Could not extract relevant .py code snippets.")
-        return {"error": "Snippet extraction failed."}
+#     buggy_code_context = handler.get_relevant_code_context(fix_sha)
+#     if not buggy_code_context:
+#         log_callback("  --> Skipping: Could not extract relevant .py code snippets.")
+#         return {"error": "Snippet extraction failed."}
 
-    context_key = list(buggy_code_context.keys())[0]
-    full_file_path = context_key.split(" ")[2]
+#     context_key = list(buggy_code_context.keys())[0]
+#     full_file_path = context_key.split(" ")[2]
 
-    is_full_file_patch = False
-    if len(buggy_code_context) > 1:
-        log_callback(
-            "  --> Warning: Multiple snippets found. Using full file for robust patching."
-        )
-        original_snippet = handler.get_full_file_content(full_file_path, parent_sha)
-        llm_context = {f"Full file content from {full_file_path}": original_snippet}
-        is_full_file_patch = True
-    else:
-        original_snippet = buggy_code_context[context_key]
-        llm_context = buggy_code_context
+#     is_full_file_patch = False
+#     if len(buggy_code_context) > 1:
+#         log_callback(
+#             "  --> Warning: Multiple snippets found. Using full file for robust patching."
+#         )
+#         original_snippet = handler.get_full_file_content(full_file_path, parent_sha)
+#         llm_context = {f"Full file content from {full_file_path}": original_snippet}
+#         is_full_file_patch = True
+#     else:
+#         original_snippet = buggy_code_context[context_key]
+#         llm_context = buggy_code_context
 
-    llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
-    ai_patch_stats = _analyze_patch(llm_fix_patch)
-    log_callback(
-        f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
-    )
+#     llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
+#     ai_patch_stats = _analyze_patch(llm_fix_patch)
+#     log_callback(
+#         f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
+#     )
 
-    handler.checkout(parent_sha)
-    applied_ok = handler.apply_patch(
-        patch_text=llm_fix_patch,
-        original_snippet=original_snippet,
-        full_file_path=full_file_path,
-        is_full_file=is_full_file_patch,
-    )
+#     handler.checkout(parent_sha)
+#     applied_ok = handler.apply_patch(
+#         patch_text=llm_fix_patch,
+#         original_snippet=original_snippet,
+#         full_file_path=full_file_path,
+#         is_full_file=is_full_file_patch,
+#     )
 
-    # tests_passed = _run_tests_with_exclusions(
-    #     handler,
-    #     test_command,
-    #     bug["repo_name"],
-    #     bug["bug_commit_sha"],
-    #     "ai_fix",
-    #     config,
-    #     log_callback,
-    #     project_root,
-    # )
-    # comp_after_llm = analysis.analyze_files(
-    #     handler.repo_path, [full_file_path], log_callback
-    # )
+#     # tests_passed = _run_tests_with_exclusions(
+#     #     handler,
+#     #     test_command,
+#     #     bug["repo_name"],
+#     #     bug["bug_commit_sha"],
+#     #     "ai_fix",
+#     #     config,
+#     #     log_callback,
+#     #     project_root,
+#     # )
+#     # comp_after_llm = analysis.analyze_files(
+#     #     handler.repo_path, [full_file_path], log_callback
+#     # )
 
-    # return {
-    #     "applied_ok": applied_ok,
-    #     "tests_passed": tests_passed,
-    #     "complexity": comp_after_llm,
-    #     "changed_files": [full_file_path],
-    #     "patch_stats": ai_patch_stats,
-    # }
-    return {"applied_ok": applied_ok, "patch_stats": ai_patch_stats}
+#     # return {
+#     #     "applied_ok": applied_ok,
+#     #     "tests_passed": tests_passed,
+#     #     "complexity": comp_after_llm,
+#     #     "changed_files": [full_file_path],
+#     #     "patch_stats": ai_patch_stats,
+#     # }
+#     return {"applied_ok": applied_ok, "patch_stats": ai_patch_stats}
 
 
-def _run_human_fix_evaluation(
-    bug: Dict[str, Any],
-    handler: project_handler.ProjectHandler,
-    test_command: str,
-    changed_files: list[str],
-    log_callback: Callable,
-    project_root: str,
-    config: Dict[str, Any],
-) -> Dict[str, Any]:
+# def _run_human_fix_evaluation(
+#     bug: Dict[str, Any],
+#     handler: project_handler.ProjectHandler,
+#     test_command: str,
+#     changed_files: list[str],
+#     log_callback: Callable,
+#     project_root: str,
+#     config: Dict[str, Any],
+# ) -> Dict[str, Any]:
 
-    log_callback("  Evaluating Human Fix...")
+#     log_callback("  Evaluating Human Fix...")
 
-    # handler.reset_to_commit(bug["parent_commit_sha"])
-    # handler.checkout(bug["bug_commit_sha"])
+#     # handler.reset_to_commit(bug["parent_commit_sha"])
+#     # handler.checkout(bug["bug_commit_sha"])
 
-    complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
+#     complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
 
-    human_patch_text = handler.get_human_patch(bug["bug_commit_sha"], changed_files[0])
-    human_patch_stats = _analyze_patch(human_patch_text)
-    log_callback(
-        f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
-    )
+#     human_patch_text = handler.get_human_patch(bug["bug_commit_sha"], changed_files[0])
+#     human_patch_stats = _analyze_patch(human_patch_text)
+#     log_callback(
+#         f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
+#     )
 
-    tests_passed = _run_tests_with_exclusions(
-        handler,
-        test_command,
-        bug["repo_name"],
-        bug["bug_commit_sha"],
-        "human_fix",
-        config,
-        log_callback,
-        project_root,
-    )
+#     tests_passed = _run_tests_with_exclusions(
+#         handler,
+#         test_command,
+#         bug["repo_name"],
+#         bug["bug_commit_sha"],
+#         "human_fix",
+#         config,
+#         log_callback,
+#         project_root,
+#     )
 
-    return {
-        "tests_passed": tests_passed,
-        "complexity": complexity,
-        "patch_stats": human_patch_stats,
-    }
+#     return {
+#         "tests_passed": tests_passed,
+#         "complexity": complexity,
+#         "patch_stats": human_patch_stats,
+#     }
 
 
 def _log_results(results_path: str, bug_data: Dict[str, Any]):
@@ -317,26 +317,43 @@ def _process_bug(
         results["comp_before"] = analysis.analyze_files(
             handler.repo_path, files_in_before_state, log_callback
         )
+        log_callback(
+            f"    Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
+        )
 
         # 3. handle LLM fix state
         if not skip_llm_fix:
-            ai_eval_results = _run_ai_fix_evaluation(bug, handler, log_callback)
-            if "error" in ai_eval_results:
+            log_callback("  Evaluating AI Fix...")
+            # get all relevant code snippets from all changed files
+            buggy_code_context = handler.get_relevant_code_context(fix_sha)
+            if not buggy_code_context:
+                log_callback(
+                    "  --> ERROR: Failed to extract any code context for the LLM."
+                )
                 return
-            results["ai_results"] = ai_eval_results
 
-            if results["ai_results"]["applied_ok"]:
-                log_callback("  --> AI Patch applied successfully.")
+            llm_fix_patch = llm_manager.generate_fix_manually(bug, buggy_code_context)
+            ai_patch_stats = _analyze_patch(llm_fix_patch)
+            log_callback(
+                f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
+            )
+
+            handler.checkout(parent_sha)
+            applied_ok = handler.apply_patch(llm_fix_patch)
+
+            ai_tests_passed = False
+            ai_comp = {"total_cc": "N/A", "total_cognitive": "N/A"}
+            if applied_ok:
                 files_in_ai_state = [
                     f
                     for f in all_changed_files
                     if os.path.exists(os.path.join(handler.repo_path, f))
                 ]
-                results["ai_results"]["complexity"] = analysis.analyze_files(
+                ai_comp = analysis.analyze_files(
                     handler.repo_path, files_in_ai_state, log_callback
                 )
 
-                results["ai_results"]["tests_passed"] = _run_tests_with_exclusions(
+                ai_tests_passed = _run_tests_with_exclusions(
                     handler,
                     test_command,
                     repo_name=bug["repo_name"],
@@ -346,12 +363,13 @@ def _process_bug(
                     log_callback=log_callback,
                     project_root=project_root,
                 )
-            else:
-                results["ai_results"]["tests_passed"] = False
-                results["ai_results"]["complexity"] = {
-                    "total_cc": "N/A",
-                    "total_cognitive": "N/A",
-                }
+
+            results["ai_results"] = {
+                "applied_ok": applied_ok,
+                "tests_passed": ai_tests_passed,
+                "complexity": ai_comp,
+                "patch_stats": ai_patch_stats,
+            }
 
         else:
             log_callback("  --> Skipping AI Fix evaluation as requested.")
@@ -378,9 +396,7 @@ def _process_bug(
             handler.repo_path, files_in_human_state, log_callback
         )
 
-        human_patch_text = handler.get_human_patch(
-            fix_sha, all_changed_files[0]
-        )  # assuming one file ??
+        human_patch_text = handler.get_human_patch(fix_sha)
         human_patch_stats = _analyze_patch(human_patch_text)
         log_callback(
             f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
