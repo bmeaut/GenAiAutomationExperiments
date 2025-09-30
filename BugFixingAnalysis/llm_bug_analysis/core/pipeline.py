@@ -85,14 +85,56 @@ def _save_test_failure_log(
     return log_path
 
 
-def _run_ai_fix_evaluation(
-    bug: Dict[str, Any],
+def _run_tests_with_exclusions(
     handler: project_handler.ProjectHandler,
     test_command: str,
+    repo_name: str,
+    commit_sha: str,
+    run_type: str,
+    config: Dict[str, Any],
     log_callback: Callable,
     project_root: str,
-    config: Dict[str, Any],
+) -> bool:
+    """Constructs the full pytest command with exclusions and runs it."""
+
+    full_test_command_list = test_command.split()
+    exclusions = config.get("test_exclusions", {}).get(repo_name, {})
+
+    ignore_list = exclusions.get("ignore_paths", [])
+    if ignore_list:
+        log_callback(f"    --> Ignoring {len(ignore_list)} path(s)")
+        for path_to_ignore in ignore_list:
+            full_test_command_list.extend(["--ignore", path_to_ignore])
+
+    deselect_list = exclusions.get("deselect_nodes", [])
+    if deselect_list:
+        log_callback(f"    --> Deselecting {len(deselect_list)} test(s) as configured.")
+        for test_to_deselect in deselect_list:
+            full_test_command_list.extend(["--deselect", test_to_deselect])
+
+    try:
+        result = handler.run_tests_in_venv(full_test_command_list)
+        summary_line = "No summary line found."
+        for line in result.stdout.splitlines():
+            if "passed" in line and "in" in line and "s" in line:
+                summary_line = line.strip("=")
+        log_callback(f"    --> Tests PASSED. Summary: {summary_line}")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        log_callback(f"    --> Tests FAILED. Return code: {e.returncode}")
+        # save detailed log
+        log_path = _save_test_failure_log(
+            project_root, repo_name, commit_sha, run_type, e
+        )
+        log_callback(f"    --> Detailed logs saved to: {log_path}")
+        return False
+
+
+def _run_ai_fix_evaluation(
+    bug: Dict[str, Any], handler: project_handler.ProjectHandler, log_callback: Callable
 ) -> Dict[str, Any]:
+    """Gets and applies the LLM's fix"""
 
     log_callback("  Evaluating AI Fix...")
 
@@ -120,7 +162,6 @@ def _run_ai_fix_evaluation(
         llm_context = buggy_code_context
 
     llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
-
     ai_patch_stats = _analyze_patch(llm_fix_patch)
     log_callback(
         f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
@@ -134,53 +175,28 @@ def _run_ai_fix_evaluation(
         is_full_file=is_full_file_patch,
     )
 
-    full_test_command_list = test_command.split()
+    # tests_passed = _run_tests_with_exclusions(
+    #     handler,
+    #     test_command,
+    #     bug["repo_name"],
+    #     bug["bug_commit_sha"],
+    #     "ai_fix",
+    #     config,
+    #     log_callback,
+    #     project_root,
+    # )
+    # comp_after_llm = analysis.analyze_files(
+    #     handler.repo_path, [full_file_path], log_callback
+    # )
 
-    exclusions = config.get("test_exclusions", {}).get(bug["repo_name"], {})
-
-    ignore_list = exclusions.get("ignore_paths", [])
-    full_test_command_list = test_command.split()
-    if ignore_list:
-        log_callback(f"    --> Ignoring {len(ignore_list)} known flaky test(s).")
-        for test_to_deselect in ignore_list:
-            full_test_command_list.extend(["--ignore", test_to_deselect])
-
-    deselect_list = exclusions.get("deselect_nodes", [])
-    if deselect_list:
-        log_callback(f"    --> Deselecting {len(deselect_list)} test(s) as configured.")
-        for path_to_ignore in deselect_list:
-            full_test_command_list.extend(["--deselect", path_to_ignore])
-
-    tests_passed = False
-    try:
-        result = handler.run_tests_in_venv(full_test_command_list)
-        tests_passed = True
-        summary_line = "No summary line found."
-        for line in result.stdout.splitlines():
-            if "passed" in line and "in" in line and "s" in line:
-                summary_line = line.strip("=")
-        log_callback(f"    --> AI Fix Tests PASSED. Summary: {summary_line}")
-
-    except subprocess.CalledProcessError as e:
-        tests_passed = False
-        log_callback(f"    --> AI Fix Tests FAILED. Return code: {e.returncode}")
-        # save detailed log
-        log_path = _save_test_failure_log(
-            project_root, bug["repo_name"], fix_sha, "ai_fix", e
-        )
-        log_callback(f"    --> Detailed logs saved to: {log_path}")
-
-    comp_after_llm = analysis.analyze_files(
-        handler.repo_path, [full_file_path], log_callback
-    )
-
-    return {
-        "applied_ok": applied_ok,
-        "tests_passed": tests_passed,
-        "complexity": comp_after_llm,
-        "changed_files": [full_file_path],
-        "patch_stats": ai_patch_stats,
-    }
+    # return {
+    #     "applied_ok": applied_ok,
+    #     "tests_passed": tests_passed,
+    #     "complexity": comp_after_llm,
+    #     "changed_files": [full_file_path],
+    #     "patch_stats": ai_patch_stats,
+    # }
+    return {"applied_ok": applied_ok, "patch_stats": ai_patch_stats}
 
 
 def _run_human_fix_evaluation(
@@ -195,8 +211,10 @@ def _run_human_fix_evaluation(
 
     log_callback("  Evaluating Human Fix...")
 
-    handler.reset_to_commit(bug["parent_commit_sha"])
-    handler.checkout(bug["bug_commit_sha"])
+    # handler.reset_to_commit(bug["parent_commit_sha"])
+    # handler.checkout(bug["bug_commit_sha"])
+
+    complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
 
     human_patch_text = handler.get_human_patch(bug["bug_commit_sha"], changed_files[0])
     human_patch_stats = _analyze_patch(human_patch_text)
@@ -204,43 +222,16 @@ def _run_human_fix_evaluation(
         f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
     )
 
-    full_test_command_list = test_command.split()
-
-    exclusions = config.get("test_exclusions", {}).get(bug["repo_name"], {})
-
-    ignore_list = exclusions.get("ignore_paths", [])
-    full_test_command_list = test_command.split()
-    if ignore_list:
-        log_callback(f"    --> Ignoring {len(ignore_list)} known flaky test(s).")
-        for test_to_deselect in ignore_list:
-            full_test_command_list.extend(["--ignore", test_to_deselect])
-
-    deselect_list = exclusions.get("deselect_nodes", [])
-    if deselect_list:
-        log_callback(f"    --> Deselecting {len(deselect_list)} test(s) as configured.")
-        for path_to_ignore in deselect_list:
-            full_test_command_list.extend(["--deselect", path_to_ignore])
-
-    tests_passed = False
-    try:
-
-        result = handler.run_tests_in_venv(full_test_command_list)
-        tests_passed = True
-        summary_line = "No summary line found."
-        for line in result.stdout.splitlines():
-            if "passed" in line and "in" in line and "s" in line:
-                summary_line = line.strip("= ")
-        log_callback(f"    --> Human Fix Tests PASSED. Summary: {summary_line}")
-
-    except subprocess.CalledProcessError as e:
-        tests_passed = False
-        log_callback(f"    --> Human Fix Tests FAILED. Return code: {e.returncode}")
-        log_path = _save_test_failure_log(
-            project_root, bug["repo_name"], bug["bug_commit_sha"], "human_fix", e
-        )
-        log_callback(f"    --> Detailed logs saved to: {log_path}")
-
-    complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
+    tests_passed = _run_tests_with_exclusions(
+        handler,
+        test_command,
+        bug["repo_name"],
+        bug["bug_commit_sha"],
+        "human_fix",
+        config,
+        log_callback,
+        project_root,
+    )
 
     return {
         "tests_passed": tests_passed,
@@ -303,19 +294,65 @@ def _process_bug(
     This function contains the core analysis logic for a single bug commit.
     """
     fix_sha = bug["bug_commit_sha"]
+    parent_sha = bug["parent_commit_sha"]
     log_callback(f"\n  --- Analyzing Commit: {fix_sha[:7]} ---")
 
     try:
-
         results = {**bug}
+
+        # 1. get complete changed files list
+        all_changed_files = handler.get_changed_files(fix_sha)
+        if not all_changed_files:
+            log_callback("  --> Skipping: No Python files were changed in this commit.")
+            return
+
+        # 2. analyze the 'before' state.
+        handler.checkout(bug["parent_commit_sha"])
+        # filter for created files
+        files_in_before_state = [
+            f
+            for f in all_changed_files
+            if os.path.exists(os.path.join(handler.repo_path, f))
+        ]
+        results["comp_before"] = analysis.analyze_files(
+            handler.repo_path, files_in_before_state, log_callback
+        )
+
+        # 3. handle LLM fix state
         if not skip_llm_fix:
-            ai_results = _run_ai_fix_evaluation(
-                bug, handler, test_command, log_callback, project_root, config
-            )
-            if "error" in ai_results:
+            ai_eval_results = _run_ai_fix_evaluation(bug, handler, log_callback)
+            if "error" in ai_eval_results:
                 return
-            results["ai_results"] = ai_results
-            changed_files = ai_results.get("changed_files", [])
+            results["ai_results"] = ai_eval_results
+
+            if results["ai_results"]["applied_ok"]:
+                log_callback("  --> AI Patch applied successfully.")
+                files_in_ai_state = [
+                    f
+                    for f in all_changed_files
+                    if os.path.exists(os.path.join(handler.repo_path, f))
+                ]
+                results["ai_results"]["complexity"] = analysis.analyze_files(
+                    handler.repo_path, files_in_ai_state, log_callback
+                )
+
+                results["ai_results"]["tests_passed"] = _run_tests_with_exclusions(
+                    handler,
+                    test_command,
+                    repo_name=bug["repo_name"],
+                    commit_sha=bug["bug_commit_sha"],
+                    run_type="ai_fix",
+                    config=config,
+                    log_callback=log_callback,
+                    project_root=project_root,
+                )
+            else:
+                results["ai_results"]["tests_passed"] = False
+                results["ai_results"]["complexity"] = {
+                    "total_cc": "N/A",
+                    "total_cognitive": "N/A",
+                }
+
         else:
             log_callback("  --> Skipping AI Fix evaluation as requested.")
             results["ai_results"] = {
@@ -326,24 +363,45 @@ def _process_bug(
                     "total_cognitive": "SKIPPED",
                 },
             }
-            # still need to find out which files were changed for the human analysis.
-            changed_files = handler.get_changed_files(fix_sha)
 
-        handler.checkout(bug["parent_commit_sha"])  # reset to parent for human fix
+        # 4. handle human fix
+        log_callback("  Evaluating Human Fix...")
+        handler.checkout(fix_sha)  # reset to parent for human fix
 
-        # always run the human evaluation, for easier tesing
-        results["comp_before"] = analysis.analyze_files(
-            handler.repo_path, changed_files, log_callback
+        # handle deleted files
+        files_in_human_state = [
+            f
+            for f in all_changed_files
+            if os.path.exists(os.path.join(handler.repo_path, f))
+        ]
+        human_comp = analysis.analyze_files(
+            handler.repo_path, files_in_human_state, log_callback
         )
-        results["human_results"] = _run_human_fix_evaluation(
-            bug,
+
+        human_patch_text = handler.get_human_patch(
+            fix_sha, all_changed_files[0]
+        )  # assuming one file ??
+        human_patch_stats = _analyze_patch(human_patch_text)
+        log_callback(
+            f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
+        )
+
+        human_tests_passed = _run_tests_with_exclusions(
             handler,
             test_command,
-            changed_files,
-            log_callback,
-            project_root,
-            config,
+            repo_name=bug["repo_name"],
+            commit_sha=bug["bug_commit_sha"],
+            run_type="human_fix",
+            config=config,
+            log_callback=log_callback,
+            project_root=project_root,
         )
+
+        results["human_results"] = {
+            "tests_passed": human_tests_passed,
+            "complexity": human_comp,
+            "patch_stats": human_patch_stats,
+        }
 
         log_callback(
             f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"

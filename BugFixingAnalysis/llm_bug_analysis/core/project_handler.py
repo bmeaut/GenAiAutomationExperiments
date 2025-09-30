@@ -336,6 +336,7 @@ class ProjectHandler:
             "*requirements_dev.txt",
             "*requirements-test*.txt",
             "*test-requirements.txt",
+            "*requirements.txt",
         ]
         for pattern in patterns:
             for match in glob.glob(
