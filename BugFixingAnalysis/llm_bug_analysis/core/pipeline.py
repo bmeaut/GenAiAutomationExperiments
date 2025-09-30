@@ -5,6 +5,7 @@ from . import project_handler, analysis, llm_manager
 from typing import Callable, Dict, Any, Optional
 import subprocess
 import datetime
+import threading
 
 
 def _analyze_patch(patch_text: str) -> Dict[str, int]:
@@ -361,11 +362,21 @@ def _process_bug(
 
 
 def run(
-    log_callback,
+    log_callback: Callable,
     skip_llm_fix: bool = False,
     single_bug_data: Optional[Dict[str, Any]] = None,
+    resume_event: Optional[threading.Event] = None,
+    stop_event: Optional[threading.Event] = None,
 ):
     """The main operator for the analysis pipeline, uses persistent handler for each repository."""
+
+    # default events if not provided
+    if resume_event is None:
+        resume_event = threading.Event()
+        resume_event.set()
+    if stop_event is None:
+        stop_event = threading.Event()
+
     # load config, init results
     script_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(script_path))
@@ -404,6 +415,10 @@ def run(
 
     # process one repository at a time
     for repo_name, bugs in bugs_by_repo.items():
+        if stop_event.is_set():
+            log_callback("--> Stop signal received. Halting analysis.")
+            break
+
         log_callback(f"\n--- Starting Analysis for Repository: {repo_name} ---")
 
         # create one handler for the entire repository
@@ -419,6 +434,19 @@ def run(
 
             # iterate through the commits using the same venv
             for bug in bugs:
+
+                if not resume_event.is_set():
+                    log_callback("--> Pipeline paused. Waiting for resume signal...")
+                    # this call will block the thread until another thread calls resume_event.set()
+                    resume_event.wait()
+                    log_callback("--> Pipeline resumed.")
+
+                if stop_event.is_set():
+                    log_callback(
+                        "--> Stop signal received. Halting analysis for this repository."
+                    )
+                    break  # exit the inner loop over bugs.
+
                 _process_bug(
                     bug,
                     handler,
@@ -435,115 +463,3 @@ def run(
             # handler and venv are cleaned up only after all
             # commits for that repository are finished
             handler.cleanup()
-
-
-# def run(log_callback, skip_llm_fix: bool = False):
-#     """The main operator for the analysis pipeline, uses persistent handler for each repository."""
-#     # load config, init results
-#     script_path = os.path.abspath(__file__)
-#     project_root = os.path.dirname(os.path.dirname(script_path))
-#     config_path = os.path.join(project_root, "config.json")
-#     corpus_path = os.path.join(project_root, "corpus.json")
-#     results_path = os.path.join(project_root, "results", "results.csv")
-
-#     try:
-#         with open(config_path, "r") as f:
-#             config = json.load(f)
-#         with open(corpus_path, "r") as f:
-#             corpus = json.load(f)
-#         test_command = config.get("test_command", "pytest")
-#     except FileNotFoundError as e:
-#         log_callback(f"ERROR: {e.filename} not found.")
-#         return
-
-#     # group bugs by repository for efficiency,
-#     # so environment setup/teardown is minimized
-#     bugs_by_repo = {}
-#     for bug in corpus:
-#         repo_name = bug["repo_name"]
-#         if repo_name not in bugs_by_repo:
-#             bugs_by_repo[repo_name] = []
-#         bugs_by_repo[repo_name].append(bug)
-
-#     _initialize_results_file(results_path)
-
-#     # process one repository at a time
-#     for repo_name, bugs in bugs_by_repo.items():
-#         log_callback(f"\n--- Starting Analysis for Repository: {repo_name} ---")
-
-#         handler = project_handler.ProjectHandler(repo_name, log_callback)
-
-#         try:
-
-#             # setup repo and install dependencies once
-#             handler.setup()
-#             if not handler.setup_virtual_environment():
-#                 log_callback(
-#                     f"  --> CRITICAL: Failed to set up venv. Skipping all commits for this repo."
-#                 )
-#                 continue
-
-#             # iterate through commits in the same venv
-#             for bug in bugs:
-#                 log_callback(
-#                     f"\n  --- Analyzing Commit: {bug['bug_commit_sha'][:7]} ---"
-#                 )
-#                 # parent_sha = bug["parent_commit_sha"]
-#                 # fix_sha = bug["bug_commit_sha"]
-#                 results = {**bug}
-
-#                 if not skip_llm_fix:
-#                     results["ai_results"] = _run_ai_fix_evaluation(
-#                         bug, handler, test_command, log_callback, project_root, config
-#                     )
-#                     if "error" in results["ai_results"]:
-#                         continue
-#                     changed_files = results["ai_results"].get("changed_files", [])
-#                 else:
-#                     log_callback("  --> Skipping AI Fix evaluation as requested.")
-#                     results["ai_results"] = {
-#                         "applied_ok": "SKIPPED",
-#                         "tests_passed": "SKIPPED",
-#                         "complexity": {
-#                             "total_cc": "SKIPPED",
-#                             "total_cognitive": "SKIPPED",
-#                         },
-#                     }
-#                     # still need to find out which files were changed for the human analysis.
-#                     changed_files = handler.get_changed_files(bug["bug_commit_sha"])
-
-#                 handler.checkout(
-#                     bug["parent_commit_sha"]
-#                 )  # reset to parent for human fix
-
-#                 # always run the human evaluation, for easier tesing
-#                 results["comp_before"] = analysis.analyze_files(
-#                     handler.repo_path, changed_files, log_callback
-#                 )
-#                 results["human_results"] = _run_human_fix_evaluation(
-#                     bug,
-#                     handler,
-#                     test_command,
-#                     changed_files,
-#                     log_callback,
-#                     project_root,
-#                     config,
-#                 )
-
-#                 log_callback(
-#                     f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
-#                 )
-#                 log_callback(
-#                     f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
-#                 )
-#                 log_callback(
-#                     f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
-#                 )
-
-#                 _log_results(results_path, results)
-
-#         except Exception as e:
-#             log_callback(f"  FATAL ERROR during analysis of {repo_name}: {e}")
-#         finally:
-#             # the handler and the venv are cleaned up only after all commits are done
-#             handler.cleanup()

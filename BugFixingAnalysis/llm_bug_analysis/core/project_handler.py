@@ -1,4 +1,3 @@
-import toml
 import os
 import ast
 import shutil
@@ -9,8 +8,6 @@ from git import Optional, Repo, Commit as GitCommit, Blob
 from typing import Callable, Dict, Any
 from core import cleanup_manager
 import glob
-import hashlib
-import json
 
 
 def _extract_code_context(repo: Repo, commit_sha: str, log: Callable) -> Dict[str, Any]:

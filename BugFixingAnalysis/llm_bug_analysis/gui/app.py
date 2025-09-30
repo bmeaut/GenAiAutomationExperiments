@@ -2,8 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
 import json
 import threading
-from typing import Optional
-from core import corpus_builder, pipeline, cleanup_manager
+from core import corpus_builder, pipeline
 
 
 # ANSI color codes for terminal
@@ -28,8 +27,14 @@ class Application(tk.Frame):
         super().__init__(master)
 
         self.skip_llm_var = tk.BooleanVar(value=False)
-        # status bar
         self.status_var = tk.StringVar(value="Idle")
+
+        # if resume event is set, the thread runs - it pauses on clear
+        self.resume_event = threading.Event()
+        self.resume_event.set()
+
+        # if set, the thread should stop
+        self.stop_event = threading.Event()
 
         self.corpus_data = []
 
@@ -37,7 +42,6 @@ class Application(tk.Frame):
         self.create_widgets()
 
         # Tkinter tags for GUI log text coloring
-
         self.log_text.tag_config("SUCCESS", foreground="#2E8B57")
         self.log_text.tag_config("ERROR", foreground="#B22222")
         self.log_text.tag_config("WARNING", foreground="#DAA520")
@@ -46,6 +50,9 @@ class Application(tk.Frame):
         self.log_text.tag_config("DEBUG", foreground="gray50")
 
         self.load_config()
+
+        # load existing corpus if available
+        self.load_corpus_to_gui()
 
     def create_widgets(self):
 
@@ -67,6 +74,35 @@ class Application(tk.Frame):
         control_frame = tk.LabelFrame(self, text="Controls")
         control_frame.pack(fill="x", expand=False, pady=10)
 
+        # frame for pause/stop
+        run_control_frame = tk.Frame(control_frame)
+        run_control_frame.pack(fill="x", padx=5, pady=5)
+
+        self.pause_button = tk.Button(
+            run_control_frame,
+            text="Pause",
+            command=self.pause_pipeline,
+            state=tk.DISABLED,
+        )
+        self.pause_button.pack(side="left", expand=True, fill="x", padx=2)
+
+        self.resume_button = tk.Button(
+            run_control_frame,
+            text="Resume",
+            command=self.resume_pipeline,
+            state=tk.DISABLED,
+        )
+        self.resume_button.pack(side="left", expand=True, fill="x", padx=2)
+
+        self.stop_button = tk.Button(
+            run_control_frame,
+            text="Stop",
+            command=self.stop_pipeline,
+            state=tk.DISABLED,
+            fg="red",
+        )
+        self.stop_button.pack(side="left", expand=True, fill="x", padx=2)
+
         # frame to hold top-row widgets
         options_frame = tk.Frame(control_frame)
         options_frame.pack(fill="x", padx=5, pady=2)
@@ -82,14 +118,18 @@ class Application(tk.Frame):
         )
 
         # frame to hold main buttons
-        actions_frame = tk.Frame(control_frame)
-        actions_frame.pack(fill="x", expand=True)
+        self.actions_frame = tk.Frame(control_frame)
+        self.actions_frame.pack(fill="x", expand=True)
 
         tk.Button(
-            actions_frame, text="1. Build Bug Corpus", command=self.run_corpus_builder
+            self.actions_frame,
+            text="1. Build Bug Corpus",
+            command=self.run_corpus_builder,
         ).pack(fill="x")
         tk.Button(
-            actions_frame, text="2. Run Analysis Pipeline", command=self.run_pipeline
+            self.actions_frame,
+            text="2. Run Analysis Pipeline",
+            command=self.run_pipeline,
         ).pack(fill="x")
 
         # corpus viewer and single run
@@ -117,6 +157,47 @@ class Application(tk.Frame):
             self, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W
         )
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def pause_pipeline(self):
+        """Clears the resume event, causing the pipeline to wait."""
+        if self.resume_event.is_set():
+            self.resume_event.clear()
+            self.set_status("Paused...")
+            self.pause_button.config(state=tk.DISABLED)
+            self.resume_button.config(state=tk.NORMAL)
+            self.log(">>> Pipeline paused by user. Click 'Resume' to continue.")
+
+    def resume_pipeline(self):
+        """Sets the resume event, allowing the pipeline to continue."""
+        if not self.resume_event.is_set():
+            self.resume_event.set()
+            self.set_status("Busy: Resuming analysis...")
+            self.pause_button.config(state=tk.NORMAL)
+            self.resume_button.config(state=tk.DISABLED)
+            self.log(">>> Pipeline resumed by user.")
+
+    def stop_pipeline(self):
+        """Sets the stop event, signaling the pipeline to terminate gracefully."""
+        self.set_status("Stopping...")
+        # this way the thread isn't stuck paused when trying to stop
+        self.resume_event.set()
+        self.stop_event.set()
+        self._set_running_state(False)  # disable buttons
+        self.log(">>> Stop signal sent. The pipeline will halt after the current task.")
+
+    def _set_running_state(self, is_running: bool):
+        """Helper to enable/disable all relevant buttons when a task starts/stops."""
+        action_button_state = tk.DISABLED if is_running else tk.NORMAL
+
+        # disable while task is running
+        for child in self.actions_frame.winfo_children():
+            if isinstance(child, (tk.Button, tk.Checkbutton, tk.Radiobutton)):
+                child.config(state=action_button_state)
+
+        self.pause_button.config(state=tk.NORMAL if is_running else tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL if is_running else tk.DISABLED)
+        # resume should always be disabled when a task is not paused
+        self.resume_button.config(state=tk.DISABLED)
 
     def clear_log(self):
         """Clears all text from the log viewer widget."""
@@ -228,20 +309,12 @@ class Application(tk.Frame):
 
         self.master.after(0, lambda: _update_gui_log(message, tag))
 
-        # def _update_log():
-        #     self.log_text.config(state="normal")
-        #     self.log_text.insert(tk.END, message + "\n")
-        #     self.log_text.config(state="disabled")
-        #     self.log_text.see(tk.END)  # auto-scroll to the end
-
-        # self.winfo_toplevel().after(0, _update_log)
-
     def run_corpus_builder(self):
         self.set_status("Busy: Building bug corpus...")
 
         def _build_and_update_status():
             corpus_builder.build(self.log)
-            # This will run after the build is complete.
+            # runs after the build is complete
             self.load_corpus_to_gui()
             self.set_status("Idle")
 
@@ -275,8 +348,18 @@ class Application(tk.Frame):
             )
             return
 
+        if not self.corpus_data:
+            messagebox.showerror(
+                "Error", "Corpus data is not loaded. Please build the corpus first."
+            )
+            return
+
         selected_index = selected_indices[0]
         selected_bug_data = self.corpus_data[selected_index]
+
+        # reset for clear run
+        self.stop_event.clear()
+        self.resume_event.set()
 
         skip_llm_fix = self.skip_llm_var.get()
         if skip_llm_fix:
@@ -284,14 +367,27 @@ class Application(tk.Frame):
         else:
             self.set_status(f"Busy: Running single commit (Full Run)...")
 
-        def _run_and_update_status():
+        def _task_wrapper():
+            self._set_running_state(True)
+            try:
+                # run for specific commit only
+                pipeline.run(
+                    self.log,
+                    self.skip_llm_var.get(),
+                    single_bug_data=selected_bug_data,
+                    resume_event=self.resume_event,
+                    stop_event=self.stop_event,
+                )
+            finally:
+                self._set_running_state(False)
+                self.set_status("Idle")
+                if not self.stop_event.is_set():
+                    self.log(f">>> Single commit analysis finished.")
 
-            pipeline.run(self.log, skip_llm_fix, single_bug_data=selected_bug_data)
-            self.set_status("Idle")
-
-        threading.Thread(target=_run_and_update_status, daemon=True).start()
+        threading.Thread(target=_task_wrapper, daemon=True).start()
 
     def run_pipeline(self):
+        """Runs the analysis pipeline for the entire corpus"""
         try:
             with open("corpus.json") as f:
                 if not json.load(f):
@@ -302,24 +398,40 @@ class Application(tk.Frame):
                         "Error", "Corpus is empty. Please build the corpus first."
                     )
                     return
-        except FileNotFoundError:
-            self.log("ERROR: corpus.json not found. Please build the corpus first.")
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.log(
+                "ERROR: corpus.json not found or is invalid. Please build the corpus first."
+            )
             messagebox.showerror(
-                "Error", "Corpus not found. Please build the corpus first."
+                "Error",
+                "Corpus not found or is invalid. Please build the corpus first.",
             )
             return
 
-        skip_llm_fix = self.skip_llm_var.get()
+        # reset for clear run
+        self.stop_event.clear()
+        self.resume_event.set()
 
         if self.skip_llm_var.get():
             self.set_status("Busy: Running analysis pipeline (Dry Run)...")
         else:
             self.set_status("Busy: Running analysis pipeline (Full Run)...")
 
-        def _run_and_update_status():
-            skip_llm_fix = self.skip_llm_var.get()
-            pipeline.run(self.log, skip_llm_fix)
-            # will run after pipeline is complete
-            self.set_status("Idle")
+        def _task_wrapper():
+            self._set_running_state(True)
+            try:
 
-        threading.Thread(target=_run_and_update_status, daemon=True).start()
+                pipeline.run(
+                    self.log,
+                    self.skip_llm_var.get(),
+                    single_bug_data=None,  # process all commits
+                    resume_event=self.resume_event,
+                    stop_event=self.stop_event,
+                )
+            finally:
+                self._set_running_state(False)
+                self.set_status("Idle")
+                if not self.stop_event.is_set():
+                    self.log(">>> Full pipeline finished.")
+
+        threading.Thread(target=_task_wrapper, daemon=True).start()

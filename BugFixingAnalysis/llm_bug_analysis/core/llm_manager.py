@@ -67,7 +67,7 @@ def generate_fix_manually(bug_data, code_context_snippets):
 
     print("\nResponse file detected!")
 
-    # --- Read the response, extract the patch, and clean up ---
+    # Read response, extract patch, clean up
     with open(response_file_path, "r", encoding="utf-8") as f:
         llm_response = f.read()
 
