@@ -1,19 +1,51 @@
-﻿MAIL MERGE PROCESSING SUMMARY
-=============================
+MAIL MERGE PROCESSING SUMMARY
+========================================
 
-Processing Date: 2025-09-28 22:33:26
-Data Source: data/test_data.csv
-Templates Processed: 4
-Employee Records: 8
-Documents Generated: 0
-Errors: 32
+Processing Date: 2025-09-28 23:02:03
+Python-docx Support: Yes
+Total Documents Generated: 32
 
-Template Files:
-  - birthday_template.docx
-  - performance_review_template.docx
-  - salary_adjustment_template.docx
-  - test_document.docx
+Template: performance_review.txt
+Documents Generated: 8
+  - John Smith: generated_docs\performance_review_John_Smith.txt
+  - Jane Doe: generated_docs\performance_review_Jane_Doe.txt
+  - Mike Johnson: generated_docs\performance_review_Mike_Johnson.txt
+  - Sarah Wilson: generated_docs\performance_review_Sarah_Wilson.txt
+  - David Brown: generated_docs\performance_review_David_Brown.txt
+  - Lisa Garcia: generated_docs\performance_review_Lisa_Garcia.txt
+  - Robert Lee: generated_docs\performance_review_Robert_Lee.txt
+  - Emily Chen: generated_docs\performance_review_Emily_Chen.txt
 
+Template: performance_review_template.txt
+Documents Generated: 8
+  - John Smith: generated_docs\performance_review_template_John_Smith.txt
+  - Jane Doe: generated_docs\performance_review_template_Jane_Doe.txt
+  - Mike Johnson: generated_docs\performance_review_template_Mike_Johnson.txt
+  - Sarah Wilson: generated_docs\performance_review_template_Sarah_Wilson.txt
+  - David Brown: generated_docs\performance_review_template_David_Brown.txt
+  - Lisa Garcia: generated_docs\performance_review_template_Lisa_Garcia.txt
+  - Robert Lee: generated_docs\performance_review_template_Robert_Lee.txt
+  - Emily Chen: generated_docs\performance_review_template_Emily_Chen.txt
 
-Generated Files:
+Template: test_document.txt
+Documents Generated: 8
+  - John Smith: generated_docs\test_document_John_Smith.txt
+  - Jane Doe: generated_docs\test_document_Jane_Doe.txt
+  - Mike Johnson: generated_docs\test_document_Mike_Johnson.txt
+  - Sarah Wilson: generated_docs\test_document_Sarah_Wilson.txt
+  - David Brown: generated_docs\test_document_David_Brown.txt
+  - Lisa Garcia: generated_docs\test_document_Lisa_Garcia.txt
+  - Robert Lee: generated_docs\test_document_Robert_Lee.txt
+  - Emily Chen: generated_docs\test_document_Emily_Chen.txt
+
+Template: welcome_letter.txt
+Documents Generated: 8
+  - John Smith: generated_docs\welcome_letter_John_Smith.txt
+  - Jane Doe: generated_docs\welcome_letter_Jane_Doe.txt
+  - Mike Johnson: generated_docs\welcome_letter_Mike_Johnson.txt
+  - Sarah Wilson: generated_docs\welcome_letter_Sarah_Wilson.txt
+  - David Brown: generated_docs\welcome_letter_David_Brown.txt
+  - Lisa Garcia: generated_docs\welcome_letter_Lisa_Garcia.txt
+  - Robert Lee: generated_docs\welcome_letter_Robert_Lee.txt
+  - Emily Chen: generated_docs\welcome_letter_Emily_Chen.txt
 

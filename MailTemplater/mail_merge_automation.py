@@ -46,7 +46,9 @@ class MailMergeProcessor:
             if not output_filename:
                 base_name = os.path.splitext(os.path.basename(template_path))[0]
                 safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', str(row_data.get('Name', 'Unknown')))
-                output_filename = f"{base_name}_{safe_name}.docx"
+                # Keep original extension for output
+                template_ext = os.path.splitext(template_path)[1]
+                output_filename = f"{base_name}_{safe_name}{template_ext}"
             
             output_path = os.path.join(self.output_dir, output_filename)
             
@@ -75,10 +77,10 @@ class MailMergeProcessor:
             
         # Find all template files
         template_files = [f for f in os.listdir(self.template_dir) 
-                         if f.endswith('.docx')]
+                         if f.endswith('.txt') or f.endswith('.docx')]
         
         if not template_files:
-            print(f"No .docx template files found in '{self.template_dir}' directory")
+            print(f"No .txt or .docx template files found in '{self.template_dir}' directory")
             return []
         
         print(f"Found {len(template_files)} template files")
@@ -150,7 +152,7 @@ def main():
         print(f"Make sure you have:")
         print(f"1. Data file: {processor.data_file}")
         print(f"2. Template files in: {processor.template_dir}/")
-        print(f"3. Template files should end with '.docx'")
+        print(f"3. Template files should end with '.txt' or '.docx'")
 
 if __name__ == "__main__":
     main()
