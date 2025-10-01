@@ -11,10 +11,10 @@ Jelenlegi Python tool, aminek a készítése folyamatban, az alábbi főbb elvek
 
 - GitHub API segítségével előre összeszedett, Python repo-kban commit-ok elérése, szűrése, issue-k gyűjtése
 - kontextus kinyerés absztrakt szintaxisfával (AST)
-    **Kristóf:** ez pontosabban mit takar? A Python kódból AST-t készítessz? És utána pontosan mi lesz vele?
+   - **Kristóf:** ez pontosabban mit takar? A Python kódból AST-t készítessz? És utána pontosan mi lesz vele?
 - minden hiba esetén elszigetelt tesztkörnyezet létrehozása a hibajavítás előtti commit alapján
 - template alapján készített prompt kontextussal választott LLM-nek, mely válasza egy diff patch
-    **Kristóf:** a diff kimenet kikötését majd érdemes lesz megvizsgálni, hogy pl. egy LLM tud-e ugyanolyan hatékony lenni diff kimenettel, mint pl. ha ő szerkeszti a forráskódot agent módban.
+   - **Kristóf:** a diff kimenet kikötését majd érdemes lesz megvizsgálni, hogy pl. egy LLM tud-e ugyanolyan hatékony lenni diff kimenettel, mint pl. ha ő szerkeszti a forráskódot agent módban.
 - patch után a repo saját test suite-jának futtatása, teszteredmény hasonlítása a valós fix commit-hoz
 - metrikák gyűjtése: pl. ciklomatikus és kognitív komplexitás
 
@@ -47,3 +47,26 @@ Python tool készítése, ami:
 - LLM API használatnak utánanézni
 - promptba kerülő kontextus szűkítése, hogy kevesebb tokenbe kerüljön 1-1 javítási próbálkozás
 - mutation testing is kerüljön a saját test suite mellé?
+
+# 4. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+Python tool fejlesztése és javítása
+- A pipeline már projektenként csak egyszer telepít függőségeket, ami gyorsítja az elemzést, commitonkénti újraépítés overkill elővigyázatosság volt.
+- Flaky tesztek kezelése: a megbízhatatlan tesztek, tesztfájlok kizárhatóak a vizsgálatból.
+    - Függőségek verzióváltozása visszamenőleges tesztek hibátlan lefutását akadályozza, ha nem volt trackelve, hogy a teszt és commit idején milyen volt a ponton függőség-verzió, illetve WSL virtuális gépből is adódhatnak hibák
+    - Bizonyítékokat még keresem
+- A rendszer már képes kezelni több fájlt érintő javításokat is.
+- QoL: munkafolyamat megkönnyítése
+    - Pause/Stop/Resume funkció: A mondjuk egy analysis run áll 10 repoból és repónként 50 commitból, akkor a környezetek építése és a tesztek lefutása sok idő, le lehessen állítani, köztes adat ne vesszen el.
+    - A begyűjtött commit-ok kilistázódnak a GUI-ban, egy-egy specifikusat is lehet futtatni már, nem kell hozzá módosítani a config fájlban az elemzett repókat.
+    - Színes, átlátható logok: Jobban látszik, hogyan haladnak az adott projekt vagy commit tesztjei, könnyebb észlelni a hibákat.
+    - Bővítettem a `results.csv`-be mentett adatokat
+
+## Mivel fogok foglalkozni jövő héten
+
+Kerestem kapcsolódó forrásokat, melyeket fel szeretnék dolgozni, mielőtt javítom a fájlokból való kontextus kinyerést, illetve elkezdem az API vagy Agent használatot a programon belül.
+- *[A Survey of LLM-based Automated Program Repair: Taxonomies, Design Paradigms, and Applications](https://arxiv.org/html/2506.23749v1)*
+- *[An Empirical Study on LLM-based Agents for Automated Bug Fixing](https://arxiv.org/html/2411.10213v1)*
+- *[Bug Fixing with Broader Context: Enhancing LLM-Based Program Repair via Layered Knowledge Injection](https://arxiv.org/html/2506.24015v1)*
+- *[Large Language Models Meet Automated Program Repair: Innovations, Challenges and Solutions](https://www.researchgate.net/publication/387253731_Large_Language_Models_Meet_Automated_Program_Repair_Innovations_Challenges_and_Solutions/fulltext/6765655b894c5520851f2f95/Large-Language-Models-Meet-Automated-Program-Repair-Innovations-Challenges-and-Solutions.pdf)*
+- *[On the Role of Context Granularity in LLM-Driven Program Repair](https://mlforsystems.org/assets/papers/neurips2024/paper23.pdf)*
