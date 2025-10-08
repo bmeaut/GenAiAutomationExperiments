@@ -1,0 +1,14 @@
+email:
+  enabled: false
+  password: your-app-password
+  smtp_port: 587
+  smtp_server: smtp.gmail.com
+  use_tls: true
+  username: your-email@gmail.com
+google:
+  credentials_path: credentials.json
+  enabled: false
+  token_path: google_token.json
+pipeline:
+  auto_email: false
+  convert_to_pdf: true

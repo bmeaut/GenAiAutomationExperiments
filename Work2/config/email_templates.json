@@ -1,0 +1,25 @@
+{
+  "default_notification": {
+    "subject": "Automatikusan generált dokumentum - {{Name}}",
+    "body_html": "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Automatikus értesítő</title></head><body><h2>Kedves {{Name}}!</h2><p>Csatoltan küldjük az Önnek automatikusan generált dokumentumot.</p><h3>Adatok összefoglalója:</h3><ul><li><strong>Név:</strong> {{Name}}</li><li><strong>Email:</strong> {{Email}}</li><li><strong>Szervezet:</strong> {{Organization}}</li><li><strong>Dátum:</strong> {{Date}}</li></ul><p>Kérjük, ellenőrizze a dokumentum tartalmát és szükség esetén vegye fel velünk a kapcsolatot.</p><p>Üdvözlettel,<br>{{SenderName}}</p><hr><small>Ez egy automatikusan generált email. Kérjük, ne válaszoljon közvetlenül erre az üzenetre.</small></body></html>",
+    "body_text": "Kedves {{Name}}!\n\nCsatoltan küldjük az Önnek automatikusan generált dokumentumot.\n\nAdatok összefoglalója:\n- Név: {{Name}}\n- Email: {{Email}}\n- Szervezet: {{Organization}}\n- Dátum: {{Date}}\n\nKérjük, ellenőrizze a dokumentum tartalmát és szükség esetén vegye fel velünk a kapcsolatot.\n\nÜdvözlettel,\n{{SenderName}}\n\n---\nEz egy automatikusan generált email. Kérjük, ne válaszoljon közvetlenül erre az üzenetre."
+  },
+  
+  "certificate_notification": {
+    "subject": "Tanúsítvány kész - {{Name}}",
+    "body_html": "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Tanúsítvány kész</title></head><body><h2>Kedves {{Name}}!</h2><p>Örömmel értesítjük, hogy tanúsítványa elkészült és csatoltan megtalálja.</p><h3>Tanúsítvány adatai:</h3><ul><li><strong>Név:</strong> {{Name}}</li><li><strong>Szervezet:</strong> {{Organization}}</li><li><strong>Kiállítás dátuma:</strong> {{Date}}</li><li><strong>Tanúsítvány típusa:</strong> {{CertificateType}}</li></ul><p>Gratulálunk a sikeres teljesítéshez!</p><p>Üdvözlettel,<br>{{SenderName}}</p></body></html>",
+    "body_text": "Kedves {{Name}}!\n\nÖrömmel értesítjük, hogy tanúsítványa elkészült és csatoltan megtalálja.\n\nTanúsítvány adatai:\n- Név: {{Name}}\n- Szervezet: {{Organization}}\n- Kiállítás dátuma: {{Date}}\n- Tanúsítvány típusa: {{CertificateType}}\n\nGratulálunk a sikeres teljesítéshez!\n\nÜdvözlettel,\n{{SenderName}}"
+  },
+  
+  "invoice_notification": {
+    "subject": "Számla - {{InvoiceNumber}} - {{Name}}",
+    "body_html": "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Számla</title></head><body><h2>Kedves {{Name}}!</h2><p>Csatoltan küldjük a következő számlát:</p><h3>Számla adatai:</h3><ul><li><strong>Számlaszám:</strong> {{InvoiceNumber}}</li><li><strong>Kiállítás dátuma:</strong> {{Date}}</li><li><strong>Összeg:</strong> {{Amount}} {{Currency}}</li><li><strong>Fizetési határidő:</strong> {{DueDate}}</li></ul><p>Kérjük, a számlát a megadott határidőig rendezze.</p><p>Üdvözlettel,<br>{{SenderName}}</p></body></html>",
+    "body_text": "Kedves {{Name}}!\n\nCsatoltan küldjük a következő számlát:\n\nSzámla adatai:\n- Számlaszám: {{InvoiceNumber}}\n- Kiállítás dátuma: {{Date}}\n- Összeg: {{Amount}} {{Currency}}\n- Fizetési határidő: {{DueDate}}\n\nKérjük, a számlát a megadott határidőig rendezze.\n\nÜdvözlettel,\n{{SenderName}}"
+  },
+  
+  "reminder_notification": {
+    "subject": "Emlékeztető - {{Subject}}",
+    "body_html": "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Emlékeztető</title></head><body><h2>Kedves {{Name}}!</h2><p>Emlékeztetjük a következőre: <strong>{{Subject}}</strong></p><p>{{Message}}</p><p>Részletek:</p><ul><li><strong>Dátum:</strong> {{Date}}</li><li><strong>Helyszín:</strong> {{Location}}</li><li><strong>Időpont:</strong> {{Time}}</li></ul><p>Üdvözlettel,<br>{{SenderName}}</p></body></html>",
+    "body_text": "Kedves {{Name}}!\n\nEmlékeztetjük a következőre: {{Subject}}\n\n{{Message}}\n\nRészletek:\n- Dátum: {{Date}}\n- Helyszín: {{Location}}\n- Időpont: {{Time}}\n\nÜdvözlettel,\n{{SenderName}}"
+  }
+}

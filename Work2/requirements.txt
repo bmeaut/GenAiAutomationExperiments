@@ -1,0 +1,40 @@
+# Google API dependencies
+google-api-python-client==2.95.0
+google-auth-httplib2==0.1.0
+google-auth-oauthlib==1.0.0
+google-auth==2.21.0
+
+# Office automation
+python-docx==0.8.11
+openpyxl==3.1.2
+pywin32==306
+
+# PDF generation
+reportlab==4.0.4
+# weasyprint==59.0  # Optional - may have compatibility issues on Windows
+
+# Email automation (smtplib is built-in, no additional package needed)
+
+# Data processing
+pandas==2.1.0
+numpy==1.24.3
+
+# Configuration and utilities
+pyyaml==6.0.1
+requests==2.31.0
+pillow==10.0.0
+
+# PDF manipulation
+PyPDF2==3.0.1
+
+# Logging and monitoring
+loguru==0.7.0
+tqdm==4.66.0
+
+# Testing (optional)
+# pytest==7.4.0
+# pytest-cov==4.1.0
+
+# Development utilities (optional)
+# black==23.7.0
+# flake8==6.0.0

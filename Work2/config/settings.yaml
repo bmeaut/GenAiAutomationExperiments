@@ -1,0 +1,44 @@
+# Office Automation Configuration
+# Copy this file and customize for your environment
+
+google:
+  enabled: false  # Set to true when you have Google API key
+  api_key: "YOUR_GOOGLE_API_KEY_HERE"  # Get from Google Cloud Console
+  # Simple API key setup - no OAuth needed!
+  # 1. Go to https://console.cloud.google.com/
+  # 2. Create/select project  
+  # 3. Enable Google Sheets API and Google Docs API
+  # 4. Go to Credentials > Create Credentials > API Key
+  # 5. Copy the API key here
+  
+email:
+  enabled: false  # Set to true when you configure SMTP settings
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  username: "your-email@gmail.com"
+  password: "your-app-password"  # Use app password for Gmail
+  use_tls: true
+  
+  # Email recipients for reports and notifications
+  report_recipients:
+    - "manager@company.com"
+    - "team@company.com"
+  
+  notification_recipients:
+    - "admin@company.com"
+
+pipeline:
+  convert_to_pdf: true
+  auto_email: false
+  
+# Output directories
+output:
+  documents: "outputs/documents"
+  pdfs: "outputs/pdfs"
+  reports: "outputs/reports"
+  data: "outputs/data"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  file: "automation_pipeline.log"

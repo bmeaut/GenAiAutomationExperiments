@@ -1,0 +1,31 @@
+# Core dependencies for Office Automation Project
+# Install with: pip install -r requirements_minimal.txt
+
+# Google API dependencies
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+google-auth
+
+# Office automation
+python-docx
+openpyxl
+pywin32
+
+# PDF generation
+reportlab
+
+# Data processing
+pandas
+numpy
+
+# Configuration and utilities
+pyyaml
+requests
+pillow
+
+# PDF manipulation
+PyPDF2
+
+# Logging
+loguru
