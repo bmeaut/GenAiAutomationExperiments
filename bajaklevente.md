@@ -44,3 +44,35 @@ A bot képes a támogatott irányítószámok ellenőrzésére, a pizzák (fuzzy
 valamint a rendelési adatok automatikus kitöltésére.
 
 A részletes leírás és a használati útmutató a `Pizza/README.md` fájlban található. (bajaklevente branch)
+
+## 4. hét
+
+### Redmine munkaidő-nyilvántartás automatizálása
+
+A projekt során egy teljes automatizált workflow-t készítettem Redmine alapú munkaidő-nyilvántartás Excel táblázattá alakításához. A fejlesztéshez GitHub Copilot Chat-et használtam, mely három Python modult hozott létre: Selenium alapú CSV exportot, CSV feldolgozót és a kettőt összekötő főprogramot.
+
+A master prompt részletesen leírta a webes automatizálás lépéseit, beleértve a konkrét HTML elemek azonosítóit. Különösen hasznos funkció a verbose/quiet mód implementálása, mely fejlesztéskor részletes debug információkat jelenít meg, éles használatban viszont csak a lényeges kimenetet.
+
+A teljes beszélgetés a `WorkHours/CHAT.md` fájlban található.
+
+#### Eredmények
+
+A script képes a Redmine-ba való automatikus bejelentkezésre, dátum- és felhasználói szűrők beállítására, CSV export automatizálására, valamint Excel táblázat generálására a cég sablonján alapulva. Kezeli a magyar karaktereket (ANSI encoding), hétvégéket és többszörös bejegyzéseket.
+
+A részletes leírás és a használati útmutató a `WorkHours/README.md` fájlban található.
+
+## 5. hét
+
+### Neptun kód anonimizáló Excel makró
+
+A projekt során egy Excel VBA makrót készítettem, amely Neptun-kódokat anonimizál teszt adatok létrehozásához. A megoldás sózott SHA-1 hash-t használ: minden kódot a `SHA-1(só + NeptunKód)` első 6 karakterére cserél. A GitHub Copilot Chat fokozatosan építette fel a megoldást, két használati móddal: interaktív tartomány kijelöléssel és teljes oszlop feldolgozással.
+
+Egy érdekes probléma merült fel: az Excel automatikusan tudományos jelölésre (5.27E+12) alakította a hexadecimális eredményeket. A megoldás az explicit szöveg formátum beállítása volt a cellákra (`cell.NumberFormat = "@"`).
+
+A teljes beszélgetés a `NeptunAnonymizer/CHAT.md` fájlban található.
+
+#### Eredmények
+
+A makró képes konzisztens anonimizálásra (azonos só + kód = azonos eredmény), támogatja a többszörös munkalapokat, kezeli a duplikált kódokat és magyar karaktereket. Példa kimenet "test123" sóval: ABC123 → E02E6B, XYZ789 → 130F2A.
+
+A részletes leírás és a használati útmutató a `NeptunAnonymizer/README.md` fájlban található.
