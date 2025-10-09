@@ -1,3 +1,27 @@
+# Saját infrastruktúra
+
+Hosszabb távon az alkotásainkat érdemes lenne a weben, letölthető és szépen prezentált formában (leírás, screenshot stb.) közkinccsé tenni. Ennek egyik legegyszerűbb módja, ha ebben a repositoryban van egy GitHub Pages oldal is. Ekkor pl. egy docs könyvtár tartalmából a master branchen minden változáskor készül egy statikus HTML oldal, ami elérhető a bmeaut.github.io/GenAiAutomationExperiments oldalon. Ekkor a többi forráskóddal együtt bárki szerkesztheti az oldalt, könnyen tud készíteni egy új aloldalt az éppen elkészült projektje számára.
+
+A GitHub Pages tipikusan a Jekyll rendszert használja ahhoz, hogy a stílus leírókat és a site keretét, valamint a tartalmat adó markdown fájlokat weboldallá konvertálja. Lehet lokálisan is futtatni debug célokra, egyébként meg szépen dolgozik a háttérben minden alkalommal, amikor egy commit hatására változik az oldal tartalma.
+
+Feladat: kiválasztani az alap témát, customizálni, ahol kell, majd beüzemelni egy minta projekt leírással. [https://docs.github.com/en/pages/quickstart](https://docs.github.com/en/pages/quickstart)
+
+# Ötletek a VIK Dékáni Hivatal támogatására
+
+A Dékáni Hivatal munkatársai szeretettel várják a néhány érdeklődőt a feladatok részletes megbeszélésére.
+
+Mivel ez hamar kelleni fog:
+- Tetszőleges Excel táblában, ami egy oszlopban Neptun-kódot tartalmaz, az adatok anonimizálása. Azért, hogy mi kaphassunk teszt adatokat. Ehhez minden Neptun-kódot egy sózott hash kódra kell lecserélni, ahol a só értékét az Excel makró egy felugró ablakban kéri be. Miven nem nagyon kritikus a garantált ütközésmentesség, elég lesz az sha1(só + NeptunKód) első 6 karaktere. Több munkalap között az anonimizált kódok komparibilitását úgy lehet biztosítani, ha ugyanazt a só értéket használjuk mindegyik anonimizálásakor.
+
+Ami eddig felmerült:
+- Jubileumi diplomák: aki jubileumi diplomát szeretne, mindenki kitölt egy webes űrlapot, ami azonban nem támogatja a fájl csatolást, azt emailben küldik el (pl. önéletrajz), ezeket össze kell párosítani a kitöltési adatokkal. Ezután pl. a csatolt oklevél fényképen akár a sorozatszámot is lehetne ellenőrizni, hogy azt adta-e meg az űrlapon is. És lehet küldeni automatikus választ is, hogy érezze az illető a törődést. Az űrlap adatai mellé az Excel táblába akár egy cellába a teljes önéletrajzot is be lehet másolni, ha igény lesz rá.
+- Akkreditációs megfeleltetés ellenőrzése: ha egy hallgató pl. újrafelvételivel tantárgyakat akar akkreditálni, akkor kitölt egy Excel táblát, hogy melyik tárgyat melyiknek akarja elfogadtatni. Ezeket ellenőrizni kell, hogy az egyes tantervek közötti megfeleltetési szabályoknak eleget tesznek-e.
+- A BProf képzés kooperatív portáljával kapcsolatban (https://kooperativ.vik.bme.hu/) előfordul, hogy egy csomó cégnek kell emailt írni. Az email szövegében pár helyen be kell helyettesíteni pl. cég nevet, meg előfordul, hogy csatolmányt is kell küldeni, akár részben előre kitöltött űrlapokat. Lehetne automatizálni a csatolmány sablon alapján történő elkészítését (cégadatokkal feltöltését), majd az email összerakását, a fájl csatolását és a felhasználónak fel lehet dobni az Outlook email szerkesztőjében, küldésre készen.
+- A BProf portálon néha nem frissek a cégadatok. Ezért a Hivatal emailben megkérdezi, hogy van-e változás. A visszajövő emailekben megadott adatokat (az email törzsében lesz egy előre ismert formátumú táblázat) össze kell vetni a portálról kiexportált (xlsx) cégadatokkal és jelezni az eltéréseket az adminisztrátornak. Ezt egy Outlook makróval el lehet végezni, ami emaileket keres (a szövegtörzset könnyű felismerni, mert ismert sablon alapján megy ki), és kezeli az Excel táblát.
+- Hallgatói előrehaladás adatok elemzése Excel alatt (minden félévben elég sok munka)
+  - Excel tábla minden hallgató minden eredményével (külön sorban minden aláírás megadva/megtagadva, minden vizsgajegy). Hallgatónként és tárgyanként egyetlen sorba kell, hogy van-e aláírás és ha igen, mi az utolsó érvényes vizsgajegy.
+  - Hányan hanyadjára vették fel/teljesítették az adott tantárgyat.
+
 # Vegyes ötletek, bárki válaszhatja
 
 - Sablon alapján dokumentum készítés excel táblából. A cél az, hogy egy excel táblában lévő adatok alapján bármelyik sorra le lehessen generálni egy dokumentumot, amiben a placeholderek helyén az excel táblában szereplő szövegek kerülnek be. Azért, hogy a megoldás (Excel makró) többet tudjon, mint a körlevél funkció, a táblázat egy részében számszerű adatok legyenek, amikből a makró készít egy diagrammot és azt is beszúrja a dokumentum megfelelő helyére, majd elmenti PDF-ben úgy, hogy a dokumentum nevét is a táblázat alapján határozza meg.
