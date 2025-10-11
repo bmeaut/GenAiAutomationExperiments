@@ -42,6 +42,8 @@ def _initialize_results_file(path: str):
                     "llm_model",
                     "complexity_before_cc",
                     "complexity_before_cognitive",
+                    "complexity_before_avg_params",
+                    "complexity_before_total_tokens",
                     "llm_patch_applied",
                     "llm_tests_passed",
                     "ai_lines_added",
@@ -49,12 +51,16 @@ def _initialize_results_file(path: str):
                     "ai_total_diff",
                     "complexity_after_llm_cc",
                     "complexity_after_llm_cognitive",
+                    "complexity_after_llm_avg_params",
+                    "complexity_after_llm_total_tokens",
                     "human_tests_passed",
                     "human_lines_added",
                     "human_lines_deleted",
                     "human_total_diff",
                     "complexity_after_human_cc",
                     "complexity_after_human_cognitive",
+                    "complexity_after_human_avg_params",
+                    "complexity_after_human_total_tokens",
                 ]
             )
 
@@ -131,115 +137,6 @@ def _run_tests_with_exclusions(
         return False
 
 
-# def _run_ai_fix_evaluation(
-#     bug: Dict[str, Any], handler: project_handler.ProjectHandler, log_callback: Callable
-# ) -> Dict[str, Any]:
-#     """Gets and applies the LLM's fix"""
-
-#     log_callback("  Evaluating AI Fix...")
-
-#     parent_sha = bug["parent_commit_sha"]
-#     fix_sha = bug["bug_commit_sha"]
-
-#     buggy_code_context = handler.get_relevant_code_context(fix_sha)
-#     if not buggy_code_context:
-#         log_callback("  --> Skipping: Could not extract relevant .py code snippets.")
-#         return {"error": "Snippet extraction failed."}
-
-#     context_key = list(buggy_code_context.keys())[0]
-#     full_file_path = context_key.split(" ")[2]
-
-#     is_full_file_patch = False
-#     if len(buggy_code_context) > 1:
-#         log_callback(
-#             "  --> Warning: Multiple snippets found. Using full file for robust patching."
-#         )
-#         original_snippet = handler.get_full_file_content(full_file_path, parent_sha)
-#         llm_context = {f"Full file content from {full_file_path}": original_snippet}
-#         is_full_file_patch = True
-#     else:
-#         original_snippet = buggy_code_context[context_key]
-#         llm_context = buggy_code_context
-
-#     llm_fix_patch = llm_manager.generate_fix_manually(bug, llm_context)
-#     ai_patch_stats = _analyze_patch(llm_fix_patch)
-#     log_callback(
-#         f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
-#     )
-
-#     handler.checkout(parent_sha)
-#     applied_ok = handler.apply_patch(
-#         patch_text=llm_fix_patch,
-#         original_snippet=original_snippet,
-#         full_file_path=full_file_path,
-#         is_full_file=is_full_file_patch,
-#     )
-
-#     # tests_passed = _run_tests_with_exclusions(
-#     #     handler,
-#     #     test_command,
-#     #     bug["repo_name"],
-#     #     bug["bug_commit_sha"],
-#     #     "ai_fix",
-#     #     config,
-#     #     log_callback,
-#     #     project_root,
-#     # )
-#     # comp_after_llm = analysis.analyze_files(
-#     #     handler.repo_path, [full_file_path], log_callback
-#     # )
-
-#     # return {
-#     #     "applied_ok": applied_ok,
-#     #     "tests_passed": tests_passed,
-#     #     "complexity": comp_after_llm,
-#     #     "changed_files": [full_file_path],
-#     #     "patch_stats": ai_patch_stats,
-#     # }
-#     return {"applied_ok": applied_ok, "patch_stats": ai_patch_stats}
-
-
-# def _run_human_fix_evaluation(
-#     bug: Dict[str, Any],
-#     handler: project_handler.ProjectHandler,
-#     test_command: str,
-#     changed_files: list[str],
-#     log_callback: Callable,
-#     project_root: str,
-#     config: Dict[str, Any],
-# ) -> Dict[str, Any]:
-
-#     log_callback("  Evaluating Human Fix...")
-
-#     # handler.reset_to_commit(bug["parent_commit_sha"])
-#     # handler.checkout(bug["bug_commit_sha"])
-
-#     complexity = analysis.analyze_files(handler.repo_path, changed_files, log_callback)
-
-#     human_patch_text = handler.get_human_patch(bug["bug_commit_sha"], changed_files[0])
-#     human_patch_stats = _analyze_patch(human_patch_text)
-#     log_callback(
-#         f"    --> Human Patch Stats: +{human_patch_stats.get('lines_added', 0)} / -{human_patch_stats.get('lines_deleted', 0)} lines."
-#     )
-
-#     tests_passed = _run_tests_with_exclusions(
-#         handler,
-#         test_command,
-#         bug["repo_name"],
-#         bug["bug_commit_sha"],
-#         "human_fix",
-#         config,
-#         log_callback,
-#         project_root,
-#     )
-
-#     return {
-#         "tests_passed": tests_passed,
-#         "complexity": complexity,
-#         "patch_stats": human_patch_stats,
-#     }
-
-
 def _log_results(results_path: str, bug_data: Dict[str, Any]):
     """Appends a single row of results to the CSV file."""
     with open(results_path, "a", newline="", encoding="utf-8") as f:
@@ -253,17 +150,22 @@ def _log_results(results_path: str, bug_data: Dict[str, Any]):
         ai_comp = ai_results.get("complexity", {})
         human_comp = human_results.get("complexity", {})
 
+        file_paths_str = "; ".join(bug_data.get("changed_files", []))
+
         writer.writerow(
             [
                 datetime.datetime.now().isoformat(),  # timestamp
                 bug_data.get("repo_name"),
                 bug_data.get("bug_commit_sha"),
-                ai_results.get("changed_files", ["N/A"])[0],
+                file_paths_str,
                 bug_data.get("commit_message"),
                 bug_data.get("issue_title"),
                 bug_data.get("issue_body"),
+                "manual_llm",
                 comp_before.get("total_cc"),
                 comp_before.get("total_cognitive"),
+                comp_before.get("avg_params"),
+                comp_before.get("total_tokens"),
                 ai_results.get("applied_ok"),
                 ai_results.get("tests_passed"),
                 ai_stats.get("lines_added", "SKIPPED"),
@@ -271,12 +173,16 @@ def _log_results(results_path: str, bug_data: Dict[str, Any]):
                 ai_stats.get("total", "SKIPPED"),
                 ai_comp.get("total_cc"),
                 ai_comp.get("total_cognitive"),
+                ai_comp.get("avg_params"),
+                ai_comp.get("total_tokens"),
                 human_results.get("tests_passed"),
                 human_stats.get("lines_added", "SKIPPED"),
                 human_stats.get("lines_deleted", "SKIPPED"),
                 human_stats.get("total", "SKIPPED"),
                 human_comp.get("total_cc"),
                 human_comp.get("total_cognitive"),
+                human_comp.get("avg_params"),
+                human_comp.get("total_tokens"),
             ]
         )
 
@@ -301,12 +207,14 @@ def _process_bug(
         results = {**bug}
 
         # 1. get complete changed files list
+        # file path should be stores to results later
         all_changed_files = handler.get_changed_files(fix_sha)
         if not all_changed_files:
             log_callback("  --> Skipping: No Python files were changed in this commit.")
             return
 
         # 2. analyze the 'before' state.
+        log_callback("  Analyzing 'before' state...")
         handler.checkout(bug["parent_commit_sha"])
         # filter for created files
         files_in_before_state = [
@@ -318,7 +226,10 @@ def _process_bug(
             handler.repo_path, files_in_before_state, log_callback
         )
         log_callback(
-            f"    Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
+            f"    --> Complexity Before: CC={results['comp_before'].get('total_cc')}, "
+            f"Cognitive={results['comp_before'].get('total_cognitive')}, "
+            f"Avg Params={results['comp_before'].get('avg_params')}, "
+            f"Total Tokens={results['comp_before'].get('total_tokens')}"
         )
 
         # 3. handle LLM fix state
@@ -342,7 +253,12 @@ def _process_bug(
             applied_ok = handler.apply_patch(llm_fix_patch)
 
             ai_tests_passed = False
-            ai_comp = {"total_cc": "N/A", "total_cognitive": "N/A"}
+            ai_comp = {
+                "total_cc": "N/A",
+                "total_cognitive": "N/A",
+                "avg_params": "N/A",
+                "total_tokens": "N/A",
+            }
             if applied_ok:
                 files_in_ai_state = [
                     f
@@ -379,6 +295,8 @@ def _process_bug(
                 "complexity": {
                     "total_cc": "SKIPPED",
                     "total_cognitive": "SKIPPED",
+                    "avg_params": "SKIPPED",
+                    "total_tokens": "SKIPPED",
                 },
             }
 
@@ -420,13 +338,16 @@ def _process_bug(
         }
 
         log_callback(
-            f"  Complexity Before: CC={results['comp_before']['total_cc']}, Cognitive={results['comp_before']['total_cognitive']}"
+            f"    --> Complexity After LLM: CC={results.get('ai_results', {}).get('complexity', {}).get('total_cc')}, "
+            f"Cognitive={results.get('ai_results', {}).get('complexity', {}).get('total_cognitive')}, "
+            f"Avg Params={results.get('ai_results', {}).get('complexity', {}).get('avg_params')}, "
+            f"Total Tokens={results.get('ai_results', {}).get('complexity', {}).get('total_tokens')}"
         )
         log_callback(
-            f"  Complexity After LLM: CC={results['ai_results']['complexity']['total_cc']}, Cognitive={results['ai_results']['complexity']['total_cognitive']}"
-        )
-        log_callback(
-            f"  Complexity After Human: CC={results['human_results']['complexity']['total_cc']}, Cognitive={results['human_results']['complexity']['total_cognitive']}"
+            f"    --> Complexity After Human: CC={results.get('human_results', {}).get('complexity', {}).get('total_cc')}, "
+            f"Cognitive={results.get('human_results', {}).get('complexity', {}).get('total_cognitive')}, "
+            f"Avg Params={results.get('human_results', {}).get('complexity', {}).get('avg_params')}, "
+            f"Total Tokens={results.get('human_results', {}).get('complexity', {}).get('total_tokens')}"
         )
 
         _log_results(os.path.join(project_root, "results", "results.csv"), results)
