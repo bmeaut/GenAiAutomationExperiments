@@ -1,10 +1,5 @@
-timestamp,repo_name,bug_commit_sha,file_path,commit_message,issue_title,issue_body,llm_model,complexity_before_cc,complexity_before_cognitive,llm_patch_applied,llm_tests_passed,ai_lines_added,ai_lines_deleted,ai_total_diff,complexity_after_llm_cc,complexity_after_llm_cognitive,human_tests_passed,human_lines_added,human_lines_deleted,human_total_diff,complexity_after_human_cc,complexity_after_human_cognitive
-2025-09-29T22:11:20.978898,mahmoud/boltons,469bb2679433b1229ba3978bdbc0e5bad5aac3ee,N/A,Fix boltons.strutils.__all__ missing names (#356),Fix `boltons.strutils.__all__` missing names,"Closes #355 
-
-Missed in https://github.com/mahmoud/boltons/commit/17c64d01c2d9837a3b60f67de664de4a2cde7918, CC @mahmoud 
-
-This could've been caught by a linter (see Flake8/Ruff) or a type-checker (see mypy/pyright, #190)",169,0,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,True,1,1,2,169,0
-2025-09-29T22:11:23.042929,mahmoud/boltons,4815fc8dd1768da5f2d903846d2ab994aa57b0cf,N/A,Test and fix for #348 (#349),LRU .values() and dict return old entries,"Hi,
+timestamp,repo_name,bug_commit_sha,file_path,commit_message,issue_title,issue_body,llm_model,complexity_before_cc,complexity_before_cognitive,complexity_before_avg_params,complexity_before_total_tokens,llm_patch_applied,llm_tests_passed,ai_lines_added,ai_lines_deleted,ai_total_diff,complexity_after_llm_cc,complexity_after_llm_cognitive,complexity_after_llm_avg_params,complexity_after_llm_total_tokens,human_tests_passed,human_lines_added,human_lines_deleted,human_total_diff,complexity_after_human_cc,complexity_after_human_cognitive,complexity_after_human_avg_params,complexity_after_human_total_tokens
+2025-10-11T15:02:54.981034,mahmoud/boltons,4815fc8dd1768da5f2d903846d2ab994aa57b0cf,,Test and fix for #348 (#349),LRU .values() and dict return old entries,"Hi,
 
 First of all thanks for the excellent library!
 
@@ -88,5 +83,4 @@ FAILED foo.py::test_lru - AssertionError: assert {'a': 1} == {'a': 200}
 ========================= 1 failed in 0.04s =========================
 ```
 
-At first it seems like a bug? Or perhaps this usage is not meant to be supported?",296,0,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,True,2,1,3,303,0
-2025-09-29T22:11:25.035229,mahmoud/boltons,46599bc0d498dd8adc3aea833ce1445feed349dd,N/A,Support `ior` for `dictutils.OMD` (#341),Support `ior` for `dictutils.OMD`,Fixes #340,419,0,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,True,4,0,4,423,0
+At first it seems like a bug? Or perhaps this usage is not meant to be supported?",manual_llm,198,135,1.69,4927,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,SKIPPED,True,44,9,53,199,135,1.68,5014

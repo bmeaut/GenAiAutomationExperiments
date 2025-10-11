@@ -1,15 +1,14 @@
-Your task is to act as an expert software engineer and fix a bug based on a real-world bug report.
-You will be given the full bug report from a GitHub issue and the specific, buggy code snippet(s).
+Your task is to act as an expert software engineer and fix a bug based on a real-world bug report from a GitHub issue.
 
-Your goal is to generate a code patch that fixes the bug described in the report. The patch must be in the standard diff format, enclosed in a ```diff markdown block.
+You will be given the full bug report and the specific, buggy code snippet(s) that were identified as relevant to the fix.
+
+Your goal is to generate a code patch that resolves the issue described in the report. The patch must be in the standard diff format, enclosed in a ```diff markdown block.
 
 ============================================================
 **BUG REPORT**
 ============================================================
 
 **Issue Title:** {issue_title}
-
-**Commit Message:** {commit_message}
 
 **Issue Body:**
 {issue_body}
@@ -19,4 +18,4 @@ Your goal is to generate a code patch that fixes the bug described in the report
 ============================================================
 {code_context}
 
-Based on the bug report and the buggy code, generate the specific patch required to fix the issue.
+Based *only* on the bug report and the provided code, generate the specific patch required to fix the issue.

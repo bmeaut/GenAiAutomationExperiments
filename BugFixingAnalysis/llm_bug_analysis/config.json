@@ -5,7 +5,11 @@
     "https://github.com/Textualize/rich",
     "https://github.com/arrow-py/arrow",
     "https://github.com/pallets/click",
-    "https://github.com/Delgan/loguru"
+    "https://github.com/Delgan/loguru",
+    "https://github.com/fastapi/fastapi",
+    "https://github.com/pydantic/pydantic",
+    "https://github.com/encode/httpx",
+    "https://github.com/scikit-learn/scikit-learn"
   ],
   "stashed_repositories": [
     "https://github.com/mahmoud/boltons",
@@ -13,7 +17,11 @@
     "https://github.com/Textualize/rich",
     "https://github.com/arrow-py/arrow",
     "https://github.com/pallets/click",
-    "https://github.com/Delgan/loguru"
+    "https://github.com/Delgan/loguru",
+    "https://github.com/fastapi/fastapi",
+    "https://github.com/pydantic/pydantic",
+    "https://github.com/encode/httpx",
+    "https://github.com/scikit-learn/scikit-learn"
   ],
   "commit_keywords": [
     "fix",
@@ -34,7 +42,7 @@
     "close"
   ],
   "test_command": "pytest",
-  "max_commits_per_repo": 5,
+  "max_commits_per_repo": 3,
   "test_exclusions": {
     "Delgan/loguru": {
       "ignore_paths": [
@@ -48,6 +56,12 @@
         "tests/test_filesink_rotation.py::test_time_rotation_reopening_xattr_oserror[True]",
         "tests/test_filesink_rotation.py::test_time_rotation_reopening_native[True]"
       ]
+    },
+    "fastapi/fastapi": {
+      "ignore_paths": [
+        "tests/test_tutorial/test_header_param_models"
+      ],
+      "deselect_nodes": []
     }
   }
 }
