@@ -4,6 +4,11 @@ This repository contains the source code and experimental data for a thesis proj
 
 The core of this project is a semi-automated Python tool that systematically benchmarks LLM performance against human-written solutions from popular open-source Python repositories.
 
+**For a full, interactive project description and a detailed analysis of the results, please visit the official project website:**
+
+**[https://engemkeres.github.io/llm-analysis-thesis/](https://engemkeres.github.io/llm-analysis-thesis/)**
+
+
 ### PS: The tools development and the thesis is still in progress.
 ---
 
