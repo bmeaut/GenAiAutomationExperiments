@@ -9,7 +9,7 @@ The core of this project is a semi-automated Python tool that systematically ben
 **[https://engemkeres.github.io/llm-analysis-thesis/](https://engemkeres.github.io/llm-analysis-thesis/)**
 
 
-### PS: The tools development and the thesis is still in progress.
+### PS: The tools development, the data presentation and the thesis is still in progress.
 ---
 
 ## Thesis Objective
