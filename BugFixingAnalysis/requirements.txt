@@ -5,7 +5,29 @@
 #    pip-compile --cert=None --client-cert=None --index-url=None --pip-args=None requirements.in
 #
 anyio==4.11.0
-    # via httpx
+    # via
+    #   httpx
+    #   jupyter-server
+argon2-cffi==25.1.0
+    # via jupyter-server
+argon2-cffi-bindings==25.1.0
+    # via argon2-cffi
+arrow==1.3.0
+    # via isoduration
+asttokens==3.0.0
+    # via stack-data
+async-lru==2.0.5
+    # via jupyterlab
+attrs==25.4.0
+    # via
+    #   jsonschema
+    #   referencing
+babel==2.17.0
+    # via jupyterlab-server
+beautifulsoup4==4.14.2
+    # via nbconvert
+bleach[css]==6.2.0
+    # via nbconvert
 build==1.3.0
     # via poetry
 cachecontrol[filecache]==0.14.3
@@ -17,32 +39,57 @@ certifi==2025.8.3
     #   requests
 cffi==2.0.0
     # via
+    #   argon2-cffi-bindings
     #   cryptography
     #   pynacl
 charset-normalizer==3.4.3
     # via requests
 cleo==2.1.0
     # via poetry
+click==8.3.0
+    # via typer
 colorama==0.4.6
     # via radon
+comm==0.2.3
+    # via ipykernel
+complexipy==4.2.0
+    # via -r requirements.in
+contourpy==1.3.3
+    # via matplotlib
 crashtest==0.4.1
     # via cleo
 cryptography==46.0.1
     # via
     #   pyjwt
     #   secretstorage
+cycler==0.12.1
+    # via matplotlib
+debugpy==1.8.17
+    # via ipykernel
+decorator==5.2.1
+    # via ipython
+defusedxml==0.7.1
+    # via nbconvert
 distlib==0.4.0
     # via virtualenv
 dulwich==0.24.2
     # via poetry
+executing==2.2.1
+    # via stack-data
 fastjsonschema==2.21.2
-    # via poetry
+    # via
+    #   nbformat
+    #   poetry
 filelock==3.19.1
     # via
     #   cachecontrol
     #   virtualenv
 findpython==0.7.0
     # via poetry
+fonttools==4.60.1
+    # via matplotlib
+fqdn==1.5.1
+    # via jsonschema
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.45
@@ -52,49 +99,176 @@ h11==0.16.0
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
-    # via pbs-installer
+    # via
+    #   jupyterlab
+    #   pbs-installer
 idna==3.10
     # via
     #   anyio
     #   httpx
+    #   jsonschema
     #   requests
 iniconfig==2.1.0
     # via pytest
 installer==0.7.0
     # via poetry
+ipykernel==6.30.1
+    # via jupyterlab
+ipython==9.6.0
+    # via ipykernel
+ipython-pygments-lexers==1.1.1
+    # via ipython
+isoduration==20.11.0
+    # via jsonschema
 jaraco-classes==3.4.0
     # via keyring
 jaraco-context==6.0.1
     # via keyring
 jaraco-functools==4.3.0
     # via keyring
+jedi==0.19.2
+    # via ipython
 jeepney==0.9.0
     # via
     #   keyring
     #   secretstorage
+jinja2==3.1.6
+    # via
+    #   jupyter-server
+    #   jupyterlab
+    #   jupyterlab-server
+    #   nbconvert
+json5==0.12.1
+    # via jupyterlab-server
+jsonpointer==3.0.0
+    # via jsonschema
+jsonschema[format-nongpl]==4.25.1
+    # via
+    #   jupyter-events
+    #   jupyterlab-server
+    #   nbformat
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+jupyter-client==8.6.3
+    # via
+    #   ipykernel
+    #   jupyter-server
+    #   nbclient
+jupyter-core==5.8.1
+    # via
+    #   ipykernel
+    #   jupyter-client
+    #   jupyter-server
+    #   jupyterlab
+    #   nbclient
+    #   nbconvert
+    #   nbformat
+jupyter-events==0.12.0
+    # via jupyter-server
+jupyter-lsp==2.3.0
+    # via jupyterlab
+jupyter-server==2.17.0
+    # via
+    #   jupyter-lsp
+    #   jupyterlab
+    #   jupyterlab-server
+    #   notebook-shim
+jupyter-server-terminals==0.5.3
+    # via jupyter-server
+jupyterlab==4.4.9
+    # via -r requirements.in
+jupyterlab-pygments==0.3.0
+    # via nbconvert
+jupyterlab-server==2.27.3
+    # via jupyterlab
 keyring==25.6.0
     # via poetry
+kiwisolver==1.4.9
+    # via matplotlib
+lark==1.3.0
+    # via rfc3987-syntax
+lizard==1.18.0
+    # via -r requirements.in
 mando==0.7.1
     # via radon
+markdown-it-py==4.0.0
+    # via rich
+markupsafe==3.0.3
+    # via
+    #   jinja2
+    #   nbconvert
+matplotlib==3.10.7
+    # via
+    #   -r requirements.in
+    #   seaborn
+matplotlib-inline==0.1.7
+    # via
+    #   ipykernel
+    #   ipython
+mdurl==0.1.2
+    # via markdown-it-py
+mistune==3.1.4
+    # via nbconvert
 more-itertools==10.8.0
     # via
     #   jaraco-classes
     #   jaraco-functools
 msgpack==1.1.1
     # via cachecontrol
+nbclient==0.10.2
+    # via nbconvert
+nbconvert==7.16.6
+    # via jupyter-server
+nbformat==5.10.4
+    # via
+    #   jupyter-server
+    #   nbclient
+    #   nbconvert
+nest-asyncio==1.6.0
+    # via ipykernel
+notebook-shim==0.2.4
+    # via jupyterlab
+numpy==2.3.3
+    # via
+    #   contourpy
+    #   matplotlib
+    #   pandas
+    #   seaborn
 packaging==25.0
     # via
     #   build
     #   findpython
+    #   ipykernel
+    #   jupyter-events
+    #   jupyter-server
+    #   jupyterlab
+    #   jupyterlab-server
+    #   matplotlib
+    #   nbconvert
     #   poetry
     #   pytest
+pandas==2.3.3
+    # via
+    #   -r requirements.in
+    #   seaborn
+pandocfilters==1.5.1
+    # via nbconvert
+parso==0.8.5
+    # via jedi
+pathspec==0.12.1
+    # via lizard
 pbs-installer[download,install]==2025.9.18
     # via poetry
+pexpect==4.9.0
+    # via ipython
+pillow==11.3.0
+    # via matplotlib
 pkginfo==1.12.1.2
     # via poetry
 platformdirs==4.4.0
     # via
     #   findpython
+    #   jupyter-core
     #   poetry
     #   virtualenv
 pluggy==1.6.0
@@ -103,56 +277,167 @@ poetry==2.2.1
     # via -r requirements.in
 poetry-core==2.2.1
     # via poetry
+prometheus-client==0.23.1
+    # via jupyter-server
+prompt-toolkit==3.0.52
+    # via ipython
+psutil==7.1.0
+    # via ipykernel
+ptyprocess==0.7.0
+    # via
+    #   pexpect
+    #   terminado
+pure-eval==0.2.3
+    # via stack-data
 pycparser==2.23
     # via cffi
 pygithub==2.8.1
     # via -r requirements.in
 pygments==2.19.2
-    # via pytest
+    # via
+    #   ipython
+    #   ipython-pygments-lexers
+    #   lizard
+    #   nbconvert
+    #   pytest
+    #   rich
 pyjwt[crypto]==2.10.1
     # via pygithub
 pynacl==1.6.0
     # via pygithub
+pyparsing==3.2.5
+    # via matplotlib
 pyproject-hooks==1.2.0
     # via
     #   build
     #   poetry
 pytest==8.4.2
     # via -r requirements.in
+python-dateutil==2.9.0.post0
+    # via
+    #   arrow
+    #   jupyter-client
+    #   matplotlib
+    #   pandas
 python-dotenv==1.1.1
     # via -r requirements.in
+python-json-logger==4.0.0
+    # via jupyter-events
+pytz==2025.2
+    # via pandas
+pyyaml==6.0.3
+    # via jupyter-events
+pyzmq==27.1.0
+    # via
+    #   ipykernel
+    #   jupyter-client
+    #   jupyter-server
 radon==6.0.1
     # via -r requirements.in
 rapidfuzz==3.14.1
     # via cleo
+referencing==0.36.2
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+    #   jupyter-events
 requests==2.32.5
     # via
     #   cachecontrol
+    #   jupyterlab-server
     #   poetry
     #   pygithub
     #   requests-toolbelt
 requests-toolbelt==1.0.0
     # via poetry
+rfc3339-validator==0.1.4
+    # via
+    #   jsonschema
+    #   jupyter-events
+rfc3986-validator==0.1.1
+    # via
+    #   jsonschema
+    #   jupyter-events
+rfc3987-syntax==1.1.0
+    # via jsonschema
+rich==14.2.0
+    # via typer
+rpds-py==0.27.1
+    # via
+    #   jsonschema
+    #   referencing
+seaborn==0.13.2
+    # via -r requirements.in
 secretstorage==3.4.0
     # via keyring
+send2trash==1.8.3
+    # via jupyter-server
 shellingham==1.5.4
-    # via poetry
+    # via
+    #   poetry
+    #   typer
 six==1.17.0
-    # via mando
+    # via
+    #   mando
+    #   python-dateutil
+    #   rfc3339-validator
 smmap==5.0.2
     # via gitdb
 sniffio==1.3.1
     # via anyio
+soupsieve==2.8
+    # via beautifulsoup4
+stack-data==0.6.3
+    # via ipython
+terminado==0.18.1
+    # via
+    #   jupyter-server
+    #   jupyter-server-terminals
+tinycss2==1.4.0
+    # via bleach
 toml==0.10.2
     # via -r requirements.in
+tomli==2.3.0
+    # via complexipy
 tomlkit==0.13.3
     # via poetry
+tornado==6.5.2
+    # via
+    #   ipykernel
+    #   jupyter-client
+    #   jupyter-server
+    #   jupyterlab
+    #   terminado
+traitlets==5.14.3
+    # via
+    #   ipykernel
+    #   ipython
+    #   jupyter-client
+    #   jupyter-core
+    #   jupyter-events
+    #   jupyter-server
+    #   jupyterlab
+    #   matplotlib-inline
+    #   nbclient
+    #   nbconvert
+    #   nbformat
 trove-classifiers==2025.9.11.17
     # via poetry
+typer==0.19.2
+    # via complexipy
+types-python-dateutil==2.9.0.20251008
+    # via arrow
 typing-extensions==4.15.0
     # via
     #   anyio
+    #   beautifulsoup4
     #   pygithub
+    #   referencing
+    #   typer
+tzdata==2025.2
+    # via pandas
+uri-template==1.3.0
+    # via jsonschema
 urllib3==2.5.0
     # via
     #   dulwich
@@ -162,5 +447,18 @@ uv==0.8.22
     # via -r requirements.in
 virtualenv==20.34.0
     # via poetry
+wcwidth==0.2.14
+    # via prompt-toolkit
+webcolors==24.11.1
+    # via jsonschema
+webencodings==0.5.1
+    # via
+    #   bleach
+    #   tinycss2
+websocket-client==1.9.0
+    # via jupyter-server
 zstandard==0.25.0
     # via pbs-installer
+
+# The following packages are considered to be unsafe in a requirements file:
+# setuptools

@@ -4,6 +4,8 @@ GitPython
 
 # Code Analysis
 radon
+lizard
+complexipy
 
 # Configuration and Environment
 python-dotenv
@@ -13,4 +15,11 @@ toml
 poetry
 uv
 
+# Testing
 pytest
+
+# Analysis and Reporting
+pandas
+jupyterlab
+matplotlib
+seaborn
