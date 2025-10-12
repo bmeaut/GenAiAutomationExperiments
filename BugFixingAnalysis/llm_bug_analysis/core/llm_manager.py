@@ -10,6 +10,76 @@ def _extract_diff_from_response(response_text):
     return response_text.strip()
 
 
+def extract_patch_from_llm_response(response: str) -> str:
+    """Extracts and cleans patch content from LLM response with better validation."""
+    import re
+
+    # remove markdown code block markers
+    cleaned = re.sub(r"```diff\s*\n", "", response)
+    cleaned = re.sub(r"```\s*$", "", cleaned, flags=re.MULTILINE)
+
+    # extract lines that look like diff content
+    lines = cleaned.split("\n")
+    patch_lines = []
+    in_patch = False
+
+    for line in lines:
+        # start collecting when we see file headers
+        if line.startswith("---") and ("a/" in line or line.count("/") > 0):
+            in_patch = True
+            patch_lines.append(line)
+        elif in_patch:
+            # continue collecting diff content
+            if (
+                line.startswith(("+++", "@@", " ", "+", "-"))
+                or line.strip() == ""
+                or (line.startswith("\\") and "No newline" in line)
+            ):
+                patch_lines.append(line)
+            else:
+                # stop at non-diff content (but allow some common additions)
+                if line.strip() and not any(
+                    skip in line.lower()
+                    for skip in [
+                        "debug",
+                        "check",
+                        "fix",
+                        "change",
+                        "minimal",
+                        "focused",
+                    ]
+                ):
+                    break
+
+    # clean up the patch
+    patch_content = "\n".join(patch_lines)
+
+    # ensure proper line endings
+    if patch_content and not patch_content.endswith("\n"):
+        patch_content += "\n"
+
+    # validate basic patch structure
+    if not _validate_patch_structure(patch_content):
+        print("WARNING: Generated patch has structural issues")
+
+    return patch_content
+
+
+def _validate_patch_structure(patch_content: str) -> bool:
+    """Basic validation of patch structure."""
+    lines = patch_content.splitlines()
+    has_file_header = False
+    has_hunk_header = False
+
+    for line in lines:
+        if line.startswith("---"):
+            has_file_header = True
+        elif line.startswith("@@"):
+            has_hunk_header = True
+
+    return has_file_header and has_hunk_header
+
+
 def generate_fix_manually(bug_data, code_context_snippets):
     """
     File-based interaction for manual LLM input (while I figure out API and Agent access).
