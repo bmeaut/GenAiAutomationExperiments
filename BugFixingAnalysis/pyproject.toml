@@ -1,13 +1,10 @@
 [project]
-name = "my_thesis_project"
+name = "llm_bug_analysis"
 version = "0.1.0"
-
-[tool.setuptools]
-package-dir = {"" = "src"}
 
 [tool.mutmut]
 # The directory where source code lives
-paths_to_mutate = ["src/"]
+paths_to_mutate = ["llm_bug_analysis/"]
 
 # The directory where tests live
 tests_dir = ["tests/"]
@@ -19,5 +16,4 @@ paths_to_ignore = ["tests/"]
 addopts = "-ra -q"
 testpaths = [
     "tests",
-    "src",
 ]
