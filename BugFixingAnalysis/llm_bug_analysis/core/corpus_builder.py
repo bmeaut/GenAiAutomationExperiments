@@ -78,11 +78,11 @@ def _load_configuration(log_callback) -> Optional[Dict[str, Any]]:
         with open(config_path, "r") as f:
             config = json.load(f)
 
-        # Ensure the required 'repositories' key exists.
+        # ensure the required 'repositories' key exists.
         if "repositories" not in config:
             raise KeyError("'repositories' key is missing from config.json")
 
-        # Set defaults for optional keys.
+        # set defaults for optional keys.
         config["commit_keywords"] = config.get(
             "commit_keywords",
             [
@@ -120,26 +120,63 @@ def _load_configuration(log_callback) -> Optional[Dict[str, Any]]:
 def _fetch_issue_data(commit_message, repo, log_callback) -> Optional[Dict[str, Any]]:
     """
     Finds and fetches data for a GitHub issue referenced in a commit message.
+    It also "chases" links within a PR body to find the real issue.
     Returns the issue data dictionary if successful, otherwise returns None.
     """
 
-    match = re.search(r"#(\d+)", commit_message)
-    if not match:
+    # find the first issue/PR number in the commit message
+    primary_match = re.search(r"#(\d+)", commit_message)
+    if not primary_match:
         return None
 
-    issue_number = int(match.group(1))
+    issue_number = int(primary_match.group(1))
     try:
-        issue = repo.get_issue(number=issue_number)
-        log_callback(f"    --> Found referenced issue #{issue_number}: {issue.title}")
+
+        issue_obj = repo.get_issue(number=issue_number)
+
+        if issue_obj.pull_request:
+            # this object is a pull request, not a pure issue
+            log_callback(f"    --> Found PR #{issue_number}: {issue_obj.title}")
+
+            issue_title = issue_obj.title
+            issue_body = issue_obj.body or ""  # ensure body is a string
+
+            # perform link-chasing within the PR body to find the *real* issue
+            link_keywords = ["fixes", "closes", "resolves"]
+            body_match = re.search(
+                rf"(?i)({'|'.join(link_keywords)})\s+#(\d+)", issue_body
+            )
+
+            if body_match:
+                linked_issue_number = int(body_match.group(2))
+                log_callback(
+                    f"    --> Found linked Issue #{linked_issue_number} in PR body. Fetching it."
+                )
+                try:
+                    linked_issue_obj = repo.get_issue(number=linked_issue_number)
+                    # the linked issue's title and body are the true source of context
+                    issue_title = linked_issue_obj.title
+                    issue_body = linked_issue_obj.body or "No issue body provided."
+                    log_callback(
+                        f"    --> Successfully fetched linked Issue: {issue_title}"
+                    )
+                except GithubException:
+                    log_callback(
+                        f"    --> WARNING: Could not fetch linked Issue #{linked_issue_number}. Using PR content instead."
+                    )
+        else:
+            # this object is a pure issue
+            log_callback(f"    --> Found Issue #{issue_number}: {issue_obj.title}")
+            issue_title = issue_obj.title
+            issue_body = issue_obj.body or "No issue body provided."
+
         return {
-            "issue_title": issue.title,
-            "issue_body": issue.body
-            or "No issue body provided.",  # Handle empty bodies
+            "issue_title": issue_title,
+            "issue_body": issue_body,
         }
     except GithubException:
-        # if no issue can be fetched, then the commit can't be used for a fair test
         log_callback(
-            f"    --> Could not fetch issue #{issue_number} (it might be a PR or private). Skipping."
+            f"    --> Could not fetch reference #{issue_number}. It may be private or deleted. Skipping."
         )
         return None
 
