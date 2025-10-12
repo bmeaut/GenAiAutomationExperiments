@@ -1,5 +1,3 @@
-# core/corpus_builder.py
-
 import json
 import ast
 import re

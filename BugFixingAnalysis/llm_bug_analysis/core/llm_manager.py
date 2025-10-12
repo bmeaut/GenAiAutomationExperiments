@@ -3,81 +3,112 @@ import os
 import time  # Import the time module for the wait loop
 
 
-def _extract_diff_from_response(response_text):
-    match = re.search(r"```diff\n(.*?)```", response_text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return response_text.strip()
+def extract_patch_from_llm_response(response_text: str) -> str | None:
+    """
+    Extract the diff patch from LLM response.
+    Returns None if no valid patch is found.
+    """
+    print("=" * 60)
+    print("DEBUG: Starting patch extraction")
+    print(f"DEBUG: Response length: {len(response_text)} chars")
+    print(f"DEBUG: First 100 chars: {response_text[:100]}")
+    print(f"DEBUG: Last 100 chars: {response_text[-100:]}")
+
+    # Find the diff block - flexible with any amount of whitespace before closing ```
+    diff_pattern = r"```diff\s*\n(.*?)\s*```"
+    match = re.search(diff_pattern, response_text, re.DOTALL)
+
+    if not match:
+        print("DEBUG: FAILED - No match with pattern r'```diff\\s*\\n(.*?)\\s*```'")
+
+        # Try to find where the diff block is
+        if "```diff" in response_text:
+            print("DEBUG: Found '```diff' in response")
+            idx = response_text.index("```diff")
+            print(f"DEBUG: Located at position {idx}")
+            print(f"DEBUG: Context (50 chars before and after):")
+            print(repr(response_text[max(0, idx - 50) : idx + 100]))
+        else:
+            print("DEBUG: '```diff' not found in response at all!")
+
+        if "```" in response_text:
+            count = response_text.count("```")
+            print(f"DEBUG: Found {count} occurrences of '```'")
+
+        return None
+
+    print("DEBUG: SUCCESS - Match found!")
+    patch = match.group(1)
+
+    patch = _clean_patch(patch)
+
+    print(f"DEBUG: Extracted patch length: {len(patch)} chars")
+    print(f"DEBUG: First 200 chars of patch:")
+    print(repr(patch[:200]))
+    print(f"DEBUG: Last 100 chars of patch:")
+    print(repr(patch[-100:]))
+
+    # Clean up: remove trailing whitespace but ensure single trailing newline
+    patch = patch.rstrip() + "\n"
+
+    print(f"DEBUG: After cleanup, patch length: {len(patch)} chars")
+
+    # Basic validation
+    if not patch.startswith("--- "):
+        print(
+            f"DEBUG: FAILED - Patch doesn't start with '--- a/', starts with: {repr(patch[:30])}"
+        )
+        return None
+
+    print("DEBUG: Patch starts with '--- a/' ✓")
+
+    if "\n+++ " not in patch:
+        print("DEBUG: FAILED - Patch missing '+++ b/' line")
+        return None
+
+    print("DEBUG: Patch has '+++ b/' line ✓")
+    print("DEBUG: Patch extraction successful!")
+    print("=" * 60)
+
+    return patch
 
 
-def extract_patch_from_llm_response(response: str) -> str:
-    """Extracts and cleans patch content from LLM response with better validation."""
-    import re
-
-    # remove markdown code block markers
-    cleaned = re.sub(r"```diff\s*\n", "", response)
-    cleaned = re.sub(r"```\s*$", "", cleaned, flags=re.MULTILINE)
-
-    # extract lines that look like diff content
-    lines = cleaned.split("\n")
-    patch_lines = []
-    in_patch = False
+def _clean_patch(patch: str) -> str:
+    """
+    Clean up common issues in extracted patches.
+    """
+    lines = patch.split("\n")
+    cleaned = []
 
     for line in lines:
-        # start collecting when we see file headers
-        if line.startswith("---") and ("a/" in line or line.count("/") > 0):
-            in_patch = True
-            patch_lines.append(line)
-        elif in_patch:
-            # continue collecting diff content
-            if (
-                line.startswith(("+++", "@@", " ", "+", "-"))
-                or line.strip() == ""
-                or (line.startswith("\\") and "No newline" in line)
-            ):
-                patch_lines.append(line)
-            else:
-                # stop at non-diff content (but allow some common additions)
-                if line.strip() and not any(
-                    skip in line.lower()
-                    for skip in [
-                        "debug",
-                        "check",
-                        "fix",
-                        "change",
-                        "minimal",
-                        "focused",
-                    ]
-                ):
-                    break
+        # remove trailing whitespace from all lines except additions
+        if line.startswith("+"):
+            # keep additions exactly as-is
+            cleaned.append(line)
+        elif line.startswith("-"):
+            # remove trailing whitespace from deletions
+            cleaned.append(line.rstrip())
+        elif (
+            line.startswith(" ")
+            or line.startswith("@@")
+            or line.startswith("---")
+            or line.startswith("+++")
+        ):
+            # context lines and headers - remove trailing whitespace
+            cleaned.append(line.rstrip())
+        elif line.strip() == "":
+            # empty lines - keep completely empty (no spaces)
+            cleaned.append("")
+        else:
+            # unknown line type, keep as-is but strip trailing
+            cleaned.append(line.rstrip())
 
-    # clean up the patch
-    patch_content = "\n".join(patch_lines)
+    # ensure single trailing newline
+    result = "\n".join(cleaned)
+    if not result.endswith("\n"):
+        result += "\n"
 
-    # ensure proper line endings
-    if patch_content and not patch_content.endswith("\n"):
-        patch_content += "\n"
-
-    # validate basic patch structure
-    if not _validate_patch_structure(patch_content):
-        print("WARNING: Generated patch has structural issues")
-
-    return patch_content
-
-
-def _validate_patch_structure(patch_content: str) -> bool:
-    """Basic validation of patch structure."""
-    lines = patch_content.splitlines()
-    has_file_header = False
-    has_hunk_header = False
-
-    for line in lines:
-        if line.startswith("---"):
-            has_file_header = True
-        elif line.startswith("@@"):
-            has_hunk_header = True
-
-    return has_file_header and has_hunk_header
+    return result
 
 
 def generate_fix_manually(bug_data, code_context_snippets):
@@ -137,16 +168,16 @@ def generate_fix_manually(bug_data, code_context_snippets):
 
     print("\nResponse file detected!")
 
-    # Read response, extract patch, clean up
+    # read response, extract patch, clean up
     with open(response_file_path, "r", encoding="utf-8") as f:
         llm_response = f.read()
 
     os.remove(prompt_file_path)
     os.remove(response_file_path)
 
-    extracted_patch = _extract_diff_from_response(llm_response)
-    print("Patch extracted successfully. Resuming analysis...")
-    return extracted_patch
+    # return the full response, not the extracted patch
+    # the pipeline will handle extraction
+    return llm_response
 
 
 def generate_fix_with_openai(bug_data, file_contents):
