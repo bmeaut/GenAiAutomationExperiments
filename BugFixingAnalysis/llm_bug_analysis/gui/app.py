@@ -29,6 +29,9 @@ class Application(tk.Frame):
         self.skip_llm_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Idle")
 
+        # debug freeze on fail
+        self.debug_mode_var = tk.BooleanVar(value=False)
+
         # if resume event is set, the thread runs - it pauses on clear
         self.resume_event = threading.Event()
         self.resume_event.set()
@@ -112,6 +115,12 @@ class Application(tk.Frame):
             text="Skip LLM Fix (Dry Run to test dependencies)",
             variable=self.skip_llm_var,
         ).pack(side="left")
+
+        tk.Checkbutton(
+            options_frame,
+            text="Pause on Failure (Debug Mode)",
+            variable=self.debug_mode_var,
+        ).pack(side="left", padx=10)
 
         tk.Button(options_frame, text="Clear Log", command=self.clear_log).pack(
             side="right"
@@ -361,6 +370,7 @@ class Application(tk.Frame):
         self.stop_event.clear()
         self.resume_event.set()
 
+        debug_on_failure = self.debug_mode_var.get()
         skip_llm_fix = self.skip_llm_var.get()
         if skip_llm_fix:
             self.set_status(f"Busy: Running single commit (Dry Run)...")
@@ -377,6 +387,7 @@ class Application(tk.Frame):
                     single_bug_data=selected_bug_data,
                     resume_event=self.resume_event,
                     stop_event=self.stop_event,
+                    debug_on_failure=debug_on_failure,
                 )
             finally:
                 self._set_running_state(False)
@@ -412,6 +423,7 @@ class Application(tk.Frame):
         self.stop_event.clear()
         self.resume_event.set()
 
+        debug_on_failure = self.debug_mode_var.get()
         if self.skip_llm_var.get():
             self.set_status("Busy: Running analysis pipeline (Dry Run)...")
         else:
@@ -427,6 +439,7 @@ class Application(tk.Frame):
                     single_bug_data=None,  # process all commits
                     resume_event=self.resume_event,
                     stop_event=self.stop_event,
+                    debug_on_failure=debug_on_failure,
                 )
             finally:
                 self._set_running_state(False)
