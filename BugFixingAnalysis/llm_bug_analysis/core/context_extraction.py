@@ -10,13 +10,31 @@ from collections import Counter
 # ==============================================================================
 
 
+def _find_enclosing_class(tree: ast.AST, changed_ranges: List[Tuple[int, int]]) -> Any:
+    """
+    If a change is outside any function, find the class that contains it.
+    """
+    if not changed_ranges:
+        return None
+    # use the start of the first change as the anchor point
+    anchor_line = changed_ranges[0][0]
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            start_line = node.lineno
+            # use getattr for safety in case end_lineno is missing
+            end_line = getattr(node, "end_lineno", start_line)
+            if start_line <= anchor_line <= end_line:
+                return node  # return the actual ast.ClassDef node
+    return None
+
+
 def _parse_diff_ranges(patch_content) -> List[Tuple[int, int]]:
     """
     Parse diff to extract all changed line ranges from the original file.
     Returns list of (start_line, end_line) tuples.
     """
     if patch_content is None:
-        print("DEBUG: patch_content is None!")
         return []
 
     # properly decode bytes to string
@@ -25,49 +43,51 @@ def _parse_diff_ranges(patch_content) -> List[Tuple[int, int]]:
     else:
         patch_text = str(patch_content)
 
-    # DEBUG: Print the actual patch content
-    print(f"DEBUG: patch_content type: {type(patch_content)}")
-    print(f"DEBUG: patch_text length: {len(patch_text)}")
-    print(f"DEBUG: First 500 chars of patch_text:")
-    print(repr(patch_text[:500]))
-    print(f"DEBUG: Looking for lines starting with '@@'...")
-
     changed_ranges = []
+    current_original_line = 0
+    range_start = None
+    range_end = None
 
     for line in patch_text.splitlines():
         # parse hunk headers like @@ -10,5 +10,7 @@
         if line.startswith("@@"):
-            print(f"DEBUG: Found @@ line: {line}")
+            # save previous range if exists
+            if range_start is not None:
+                changed_ranges.append((range_start, range_end))
+                range_start = None
+                range_end = None
+
             match = re.match(r"@@\s*-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?\s*@@", line)
             if match:
-                original_start = int(match.group(1))
-                original_count = int(match.group(2)) if match.group(2) else 1
-
-                print(
-                    f"DEBUG: Found hunk - original_start={original_start}, original_count={original_count}"
+                current_original_line = int(match.group(1))
+        elif line.startswith("-"):
+            # line was deleted or modified
+            if range_start is None:
+                range_start = current_original_line
+            range_end = current_original_line
+            current_original_line += 1
+        elif line.startswith("+"):
+            # line was added (don't increment original line counter)
+            # if we have a range going, this might be a modification
+            if range_start is not None:
+                range_end = (
+                    current_original_line - 1
+                    if current_original_line > range_start
+                    else range_start
                 )
+        elif line.startswith(" "):
+            # context line (unchanged)
+            # close current range if exists
+            if range_start is not None:
+                changed_ranges.append((range_start, range_end))
+                range_start = None
+                range_end = None
+            current_original_line += 1
+        # lines not starting with -, +, or space are headers/metadata, ignore
 
-                # for pure additions, reference the line before the insertion point
-                # this gives context about where new code was added
-                if original_count == 0:
-                    if original_start > 0:
-                        # reference the line before where code was inserted
-                        changed_ranges.append((original_start, original_start))
-                        print(
-                            f"DEBUG: Added pure addition range: ({original_start}, {original_start})"
-                        )
-                    else:
-                        print(
-                            f"DEBUG: Skipping pure addition at start of file (original_start=0)"
-                        )
-                else:
-                    # normal change or deletion
-                    range_tuple = (original_start, original_start + original_count - 1)
-                    changed_ranges.append(range_tuple)
-                    print(f"DEBUG: Added change range: {range_tuple}")
-
-    print(f"DEBUG: Total ranges before merging: {len(changed_ranges)}")
-    print(f"DEBUG: Ranges: {changed_ranges}")
+    # save final range if exists
+    if range_start is not None:
+        changed_ranges.append((range_start, range_end))
 
     # merge overlapping ranges
     if changed_ranges:
@@ -78,10 +98,8 @@ def _parse_diff_ranges(patch_content) -> List[Tuple[int, int]]:
                 merged[-1] = (merged[-1][0], max(merged[-1][1], end))
             else:
                 merged.append((start, end))
-        print(f"DEBUG: Merged ranges: {merged}")
         return merged
 
-    print("DEBUG: No ranges found!")
     return []
 
 
@@ -92,35 +110,34 @@ def _find_containing_functions_and_classes(
     Find all functions and classes that contain any of the changed lines.
     Returns list of (name, start_line, end_line, type).
     """
-    containing_nodes = []
+    if not changed_ranges:
+        return []
+
+    # use the start of the first change as the anchor
+    anchor_line = changed_ranges[0][0]
+    containing_items = []
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             start_line = node.lineno
-            end_line = getattr(node, "end_lineno", node.lineno)
+            end_line = getattr(node, "end_lineno", start_line)
+            if start_line <= anchor_line <= end_line:
+                containing_items.append(
+                    (node.name, start_line, end_line, "Function", node)
+                )
+        elif isinstance(node, ast.ClassDef):
+            start_line = node.lineno
+            end_line = getattr(node, "end_lineno", start_line)
+            if start_line <= anchor_line <= end_line:
+                containing_items.append(
+                    (node.name, start_line, end_line, "Class", node)
+                )
 
-            # include decorators
-            if hasattr(node, "decorator_list") and node.decorator_list:
-                start_line = min(d.lineno for d in node.decorator_list)
-
-            # check if any changed range overlaps with this node
-            for change_start, change_end in changed_ranges:
-                if not (end_line < change_start or start_line > change_end):
-                    node_type = (
-                        "Function"
-                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        else "Class"
-                    )
-                    containing_nodes.append(
-                        (node.name, start_line, end_line, node_type, node)
-                    )
-                    break
-
-    return containing_nodes
+    return containing_items
 
 
 # ==============================================================================
-#  THE BLUEPRINT (Abstract Base Class)
+#  (Abstract Base Class)
 # ==============================================================================
 
 
@@ -152,7 +169,7 @@ class BaseContextGatherer(ABC):
 
 
 # ==============================================================================
-#  THE FIRST CONCRETE STRATEGY (for existing logic)
+#  BASIC CONTEXT
 # ==============================================================================
 
 
@@ -170,10 +187,9 @@ class BuggyCodeContextGatherer(BaseContextGatherer):
         """
         This is the main entry point for gathering context.
         """
+        self.log("--- DEBUG: Starting BuggyCodeContextGatherer.gather ---")
         commit_sha = bug_data["bug_commit_sha"]
-        max_tokens = kwargs.get(
-            "max_tokens_per_file", 4000
-        )  # get max_tokens from orchestrator
+        max_tokens = kwargs.get("max_tokens_per_file", 4000)
 
         commit: GitCommit = self.repo.commit(commit_sha)
         if not commit.parents:
@@ -184,8 +200,12 @@ class BuggyCodeContextGatherer(BaseContextGatherer):
         diffs = parent.diff(commit, create_patch=True)
         context_snippets = {}
 
-        for diff in diffs:
+        self.log(f"--- DEBUG: Found {len(diffs)} diffs to process ---")
+
+        for i, diff in enumerate(diffs):
+            self.log(f"\n--- DEBUG: Processing diff #{i+1} for file: {diff.a_path} ---")
             if not diff.a_path or not str(diff.a_path).endswith(".py"):
+                self.log("--- DEBUG: Skipping non-python file. ---")
                 continue
             try:
                 buggy_code = (
@@ -193,23 +213,171 @@ class BuggyCodeContextGatherer(BaseContextGatherer):
                 )
                 buggy_code_lines = buggy_code.splitlines()
 
+                self.log(f"--- DEBUG: Raw diff content for {diff.a_path}:")
+                self.log(str(diff.diff))
+                self.log("--- END RAW DIFF ---")
+
                 changed_ranges = _parse_diff_ranges(diff.diff)
+                self.log(
+                    f"--- DEBUG: Result from _parse_diff_ranges: {changed_ranges} ---"
+                )
+
+                # for pure additions, extract insertion point context instead
                 if not changed_ranges:
                     self.log(
-                        f"    Warning: No valid change ranges found for {diff.a_path}"
+                        f"    Info: Pure addition detected in {diff.a_path}. Extracting insertion context."
                     )
+                    insertion_line = self._extract_insertion_line_from_diff(diff.diff)
+                    if insertion_line:
+                        file_context = self._extract_insertion_point_context(
+                            buggy_code_lines, insertion_line, diff.a_path
+                        )
+                        if file_context:
+                            context_snippets.update(file_context)
                     continue
 
                 file_context = self._extract_file_context(
-                    buggy_code_lines, changed_ranges, diff.a_path, max_tokens
+                    buggy_code_lines, changed_ranges, diff.a_path
                 )
+
+                self.log(
+                    f"--- DEBUG: Result from _extract_file_context: {'Found context' if file_context else 'No context found'} ---"
+                )
+
                 if file_context:
                     context_snippets.update(file_context)
             except Exception as e:
                 self.log(
                     f"    Warning: Could not extract context for {diff.a_path}. Reason: {e}"
                 )
+
+        self.log(
+            f"--- DEBUG: Finished BuggyCodeContextGatherer.gather. Total snippets found: {len(context_snippets)} ---"
+        )
         return context_snippets
+
+    def _extract_insertion_line_from_diff(self, patch_content) -> int | None:
+        """
+        For pure additions, extract the line number where code was inserted.
+        """
+        if isinstance(patch_content, bytes):
+            patch_text = patch_content.decode("utf-8")
+        else:
+            patch_text = str(patch_content)
+
+        for line in patch_text.splitlines():
+            if line.startswith("@@"):
+                match = re.match(r"@@\s*-(\d+)", line)
+                if match:
+                    return int(match.group(1))
+        return None
+
+    def _extract_insertion_point_context(
+        self,
+        code_lines: List[str],
+        insertion_line: int,
+        file_path: str,
+    ) -> Dict[str, str]:
+        """
+        For pure additions, extract minimal context:
+        1. Class header (if in a class)
+        2. Method before insertion
+        3. Method after insertion
+        """
+        try:
+            full_code = "\n".join(code_lines)
+            tree = ast.parse(full_code)
+        except SyntaxError:
+            self.log(f"    Warning: Could not parse AST for {file_path}.")
+            return {}
+
+        snippets = {}
+
+        # find the class containing the insertion point
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                start_line = node.lineno
+                end_line = getattr(node, "end_lineno", start_line)
+                if start_line <= insertion_line <= end_line:
+                    self.log(f"    --> Found class '{node.name}' at insertion point")
+
+                    # 1. extract class header (definition + docstring, ~20 lines max)
+                    header_end = min(start_line + 20, len(code_lines))
+                    class_header = "\n".join(code_lines[start_line - 1 : header_end])
+                    if len(class_header.split("\n")) > 5:  # only if meaningful
+                        snippets[
+                            f"FILE: {file_path}\nClass '{node.name}' header (lines {start_line}-{header_end})"
+                        ] = class_header
+                        self.log(f"    --> Extracted class header")
+
+                    # 2. find methods before and after insertion
+                    methods = []
+                    for child in node.body:
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            methods.append(
+                                (
+                                    child.name,
+                                    child.lineno,
+                                    getattr(child, "end_lineno", child.lineno),
+                                    child,
+                                )
+                            )
+
+                    methods.sort(key=lambda x: x[1])
+
+                    # extract method immediately before and after
+                    method_before = None
+                    method_after = None
+
+                    for i, (name, start, end, method_node) in enumerate(methods):
+                        if end < insertion_line:
+                            # this method ends before insertion - it's a candidate
+                            # keep updating to get the LAST (closest) one
+                            method_before = (name, start, end, method_node)
+                        elif start > insertion_line and method_after is None:
+                            # this is the first method after insertion
+                            method_after = (name, start, end, method_node)
+
+                    # extract the method before insertion
+                    if method_before:
+                        name, start, end, method_node = method_before
+                        snippet = ast.get_source_segment(full_code, method_node)
+                        if snippet:
+                            snippets[
+                                f"FILE: {file_path}\nMethod '{name}' (before insertion, lines {start}-{end})"
+                            ] = snippet
+                            self.log(
+                                f"    --> Extracted method '{name}' (before insertion)"
+                            )
+                        else:
+                            self.log(
+                                f"    WARNING: Could not extract snippet for '{name}' (before insertion)"
+                            )
+
+                    # extract the method after insertion
+                    if method_after:
+                        name, start, end, method_node = method_after
+                        snippet = ast.get_source_segment(full_code, method_node)
+                        if snippet:
+                            snippets[
+                                f"FILE: {file_path}\nMethod '{name}' (after insertion, lines {start}-{end})"
+                            ] = snippet
+                            self.log(
+                                f"    --> Extracted method '{name}' (after insertion)"
+                            )
+                        else:
+                            self.log(
+                                f"    WARNING: Could not extract snippet for '{name}' (after insertion)"
+                            )
+
+                    if not method_before and not method_after:
+                        self.log(
+                            f"    WARNING: Could not find methods before/after insertion at line {insertion_line}"
+                        )
+
+                    break  # found the class, done
+
+        return snippets
 
     def _extract_code_context(self, commit_sha: str, max_tokens_per_file=1000):
         """
@@ -248,7 +416,7 @@ class BuggyCodeContextGatherer(BaseContextGatherer):
 
                 # extract relevant code sections with size limits
                 file_context = self._extract_file_context(
-                    buggy_code_lines, changed_ranges, diff.a_path, max_tokens_per_file
+                    buggy_code_lines, changed_ranges, diff.a_path
                 )
 
                 if file_context:
@@ -266,37 +434,84 @@ class BuggyCodeContextGatherer(BaseContextGatherer):
         buggy_code_lines: List[str],
         changed_ranges: List[Tuple[int, int]],
         file_path: str,
-        max_tokens: int,
     ) -> Dict[str, str]:
         """
-        Extract context around changed ranges with size management.
+        Extract context around changed ranges.
+        Strategy:
+        1. For ADDITIONS: Show insertion point context (before/after methods)
+        2. For MODIFICATIONS: Show the exact function/method being modified
+        3. For DELETIONS: Show the function where code was removed
         """
+        self.log("--- DEBUG: Inside _extract_file_context ---")
         try:
-            tree = ast.parse("\n".join(buggy_code_lines))
+            full_code = "\n".join(buggy_code_lines)
+            tree = ast.parse(full_code)
         except SyntaxError:
-            return (
-                {}
-            )  # fallback: for now, don't return simple context, prioritize AST context.
+            self.log(f"    Warning: Could not parse AST for {file_path}.")
+            return self._extract_simple_context(
+                buggy_code_lines, changed_ranges, file_path, 1000
+            )
 
         context_snippets = {}
 
-        # strategy 1: try to extract complete functions/classes that contain changes
-        functions_and_classes = _find_containing_functions_and_classes(
-            tree, changed_ranges
-        )
+        # find what contains the change
+        containing_nodes = _find_containing_functions_and_classes(tree, changed_ranges)
 
-        if functions_and_classes:
-            # sort by size (end_line - start_line) to get the smallest containing block first
-            functions_and_classes.sort(key=lambda x: x[2] - x[1])
+        if not containing_nodes:
+            self.log("    Warning: No containing function/class found.")
+            return self._extract_simple_context(
+                buggy_code_lines, changed_ranges, file_path, 1000
+            )
 
-            name, start_line, end_line, node_type, node_obj = functions_and_classes[0]
+        # sort by size (smallest first = most specific)
+        containing_nodes.sort(key=lambda x: x[2] - x[1])
 
-            # pass the correct object (node_obj) to get_source_segment
-            snippet = ast.get_source_segment("\n".join(buggy_code_lines), node_obj)
+        # extract the smallest containing node (most specific context)
+        name, start_line, end_line, node_type, node_obj = containing_nodes[0]
 
-            if snippet:
-                context_key = f"FILE: {file_path}\n{node_type} '{name}' (lines {start_line}-{end_line})"
-                context_snippets[context_key] = snippet
+        # check if it's too large
+        node_size = end_line - start_line
+        if node_size > 100:
+            self.log(
+                f"    Warning: {node_type} '{name}' is large ({node_size} lines). Using minimal context."
+            )
+            return self._extract_minimal_context(
+                buggy_code_lines, changed_ranges, file_path, 1000
+            )
+
+        # extract the containing function/method
+        snippet = ast.get_source_segment(full_code, node_obj)
+        if snippet:
+            context_key = f"FILE: {file_path}\n{node_type} '{name}' (lines {start_line}-{end_line})"
+            context_snippets[context_key] = snippet
+            self.log(f"    --> Extracted {node_type} '{name}' (changed code is here)")
+
+            # if it's a method in a class, also show the class header for context
+            if node_type == "Function":
+                # find parent class
+                for parent_node in containing_nodes:
+                    if parent_node[3] == "Class":
+                        class_name = parent_node[0]
+                        class_start = parent_node[1]
+                        # extract just the class definition + docstring (first ~10 lines)
+                        class_header_lines = buggy_code_lines[
+                            class_start - 1 : class_start + 9
+                        ]
+                        class_header = "\n".join(class_header_lines)
+                        context_snippets[
+                            f"FILE: {file_path}\nClass '{class_name}' context (lines {class_start}-{class_start + 9})"
+                        ] = class_header
+                        self.log(
+                            f"    --> Added class header context for '{class_name}'"
+                        )
+                        break
+        else:
+            self.log(
+                f"    Warning: Could not extract snippet for {node_type} '{name}'."
+            )
+            return self._extract_simple_context(
+                buggy_code_lines, changed_ranges, file_path, 1000
+            )
 
         return context_snippets
 
@@ -611,48 +826,90 @@ class StructuralDependencyGatherer(BaseContextGatherer):
 
     def gather(self, bug_data: dict, **kwargs) -> dict:
         self.log("  Gathering structural dependencies...")
-        snippets = {}
         commit_sha = bug_data["bug_commit_sha"]
-        commit = self.repo.commit(commit_sha)
-        parent = commit.parents[0]
 
-        # need to find the names of the functions/classes containing the changes
-        changed_nodes_info = self._get_changed_node_info(commit)
+        commit: GitCommit = self.repo.commit(commit_sha)
+        if not commit.parents:
+            return {}
 
-        for file_path, node_names in changed_nodes_info.items():
+        parent: GitCommit = commit.parents[0]
+        diffs = parent.diff(commit, create_patch=True)
+
+        context = {}
+
+        for diff in diffs:
+            if not diff.a_path or not str(diff.a_path).endswith(".py"):
+                continue
+
             try:
-                file_content = (
-                    (parent.tree / file_path).data_stream.read().decode("utf-8")
+                buggy_code = (
+                    (parent.tree / diff.a_path).data_stream.read().decode("utf-8")
                 )
-                file_tree = ast.parse(file_content)
+                tree = ast.parse(buggy_code)
 
-                for node in ast.walk(file_tree):
-                    # find the AST node for the function that contains the bug
-                    if (
-                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and node.name in node_names
-                    ):
-                        # now, find what functions *it* calls
-                        for sub_node in ast.walk(node):
-                            if isinstance(sub_node, ast.Call):
-                                if isinstance(sub_node.func, ast.Name):
+                # find which class the change is in
+                insertion_line = self._get_insertion_line(diff.diff)
+                target_class = None
 
-                                    called_func_name = sub_node.func.id
-                                    # now find the definition of this function in the same file
-                                    called_func_def = self._find_function_def(
-                                        file_tree, called_func_name
-                                    )
-                                    if called_func_def:
-                                        key = f"Dependency in {file_path}: Definition of called function '{called_func_name}'"
-                                        snippets[key] = ast.get_source_segment(
-                                            file_content, called_func_def
-                                        )
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        start_line = node.lineno
+                        end_line = getattr(node, "end_lineno", start_line)
+                        if start_line <= insertion_line <= end_line:
+                            target_class = node
+                            break
+
+                if target_class:
+                    related_items = []
+
+                    # show inheritance
+                    if target_class.bases:
+                        base_names = [
+                            self._get_name(base) for base in target_class.bases
+                        ]
+                        related_items.append(
+                            f"Class '{target_class.name}' inherits from: {', '.join(base_names)}"
+                        )
+
+                    # show only operator methods from this class
+                    for child in target_class.body:
+                        if isinstance(child, ast.FunctionDef):
+                            if child.name.startswith("__") and child.name.endswith(
+                                "__"
+                            ):
+                                related_items.append(f"Operator method: {child.name}")
+
+                    if related_items:
+                        context[f"FILE: {diff.a_path}\nStructural Information"] = (
+                            "\n".join(related_items)
+                        )
+
             except Exception as e:
-                self.log(
-                    f"    Warning: Could not analyze dependencies for {file_path}. Reason: {e}"
-                )
+                self.log(f"    Warning: Could not extract structural info: {e}")
 
-        return snippets
+        return context
+
+    def _get_insertion_line(self, patch_content):
+        """Extract insertion line from diff"""
+        if isinstance(patch_content, bytes):
+            patch_text = patch_content.decode("utf-8")
+        else:
+            patch_text = str(patch_content)
+
+        for line in patch_text.splitlines():
+            if line.startswith("@@"):
+                match = re.match(r"@@\s*-(\d+)", line)
+                if match:
+                    return int(match.group(1))
+        return 0
+
+    def _get_name(self, node):
+        """Extract name from AST node"""
+        if isinstance(node, ast.Name):
+            return node.id
+        elif isinstance(node, ast.Attribute):
+            return f"{self._get_name(node.value)}.{node.attr}"
+        return str(node)
 
     def _get_changed_node_info(self, commit: GitCommit) -> Dict[str, Set[str]]:
         """
@@ -674,7 +931,7 @@ class StructuralDependencyGatherer(BaseContextGatherer):
             if not diff.a_path or not diff.a_path.endswith(".py"):
                 continue
 
-            # DEBUG: Print diff details
+            # DEBUG: print diff details
             print(f"DEBUG: Diff for {diff.a_path}:")
             print(f"  new_file: {diff.new_file}")
             print(f"  deleted_file: {diff.deleted_file}")
@@ -728,76 +985,59 @@ class HistoricalContextGatherer(BaseContextGatherer):
 
     def gather(self, bug_data: dict, **kwargs) -> dict:
         self.log("  Gathering historical context...")
-        snippets = {}
+        max_commits = kwargs.get("max_historical_commits", 5)
 
-        # get the list of changed files from the orchestrator
-        changed_py_files = [
-            path for path in kwargs.get("changed_files", []) if path.endswith(".py")
-        ]
-        if not changed_py_files:
+        commit_sha = bug_data["bug_commit_sha"]
+        commit: GitCommit = self.repo.commit(commit_sha)
+
+        if not commit.parents:
             return {}
 
-        # for simplicity, let's focus on the first buggy file
-        for buggy_filepath in changed_py_files:
+        parent = commit.parents[0]
+        diffs = parent.diff(commit, create_patch=True)
 
-            # --- strategy 1: latest Change before the bug ---
+        context = {}
+
+        for diff in diffs:
+            if not diff.a_path or not str(diff.a_path).endswith(".py"):
+                continue
+
             try:
-                # get the two most recent commits that touched this file *before* the buggy state
-                commits = list(
+                # find commits that modified this file
+                file_history = list(
                     self.repo.iter_commits(
-                        paths=buggy_filepath,
-                        max_count=2,
-                        before=bug_data["parent_commit_sha"],
+                        max_count=max_commits + 10, paths=diff.a_path
                     )
                 )
-                if len(commits) > 1:
-                    latest_commit = commits[0]
-                    previous_to_latest = commits[1]
 
-                    # get the diff between these two commits for the specific file
-                    diff = previous_to_latest.diff(
-                        latest_commit, paths=buggy_filepath, create_patch=True
+                relevant_commits = []
+                for hist_commit in file_history[:max_commits]:
+                    # skip the current commit
+                    if hist_commit.hexsha == commit_sha:
+                        continue
+
+                    # ensure message is a string - handle bytes, memoryview, etc.
+                    commit_msg = hist_commit.message
+                    if isinstance(commit_msg, (bytes, memoryview)):
+                        commit_msg = bytes(commit_msg).decode("utf-8", errors="replace")
+                    elif not isinstance(commit_msg, str):
+                        commit_msg = str(commit_msg)
+
+                    msg = commit_msg.split("\n")[0][:100]
+                    relevant_commits.append(f"- {hist_commit.hexsha[:8]}: {msg}")
+                    self.log(f"    --> Found relevant commit: {hist_commit.hexsha[:8]}")
+
+                if relevant_commits:
+                    context[f"FILE: {diff.a_path}\nRecent Changes"] = "\n".join(
+                        [
+                            f"Recent commits that modified this file:",
+                            *relevant_commits[:5],
+                        ]
                     )
-                    if diff:
-                        diff_text = diff[0].diff
-                        key = f"Most recent change to '{buggy_filepath}' before the bug occurred"
-                        snippets[key] = (
-                            f"--- (from commit {latest_commit.hexsha[:7]}) ---\n{diff_text}"
-                        )
+
             except Exception as e:
                 self.log(
-                    f"    Warning: Could not get latest change diff for {buggy_filepath}. Reason: {e}"
+                    f"    Warning: Could not extract history for {diff.a_path}: {e}"
                 )
 
-        # --- strategy 2: Co-occurring Files ---
-        try:
-            co_changed_counter = Counter()
-
-            for buggy_filepath in changed_py_files:
-                # look at the last 50 commits that touched the buggy file
-                for commit in self.repo.iter_commits(
-                    paths=buggy_filepath, max_count=50
-                ):
-                    # get all .py files in that commit, excluding the buggy file itself
-                    other_files = [
-                        f
-                        for f in commit.stats.files.keys()
-                        if str(f).endswith(".py") and f != buggy_filepath
-                    ]
-                    co_changed_counter.update(other_files)
-
-            # get the top 2 most common co-occurring files
-            if co_changed_counter:
-                top_files = co_changed_counter.most_common(2)
-                file_list = [f for f, count in top_files]
-                key = "Frequently co-changed files"
-                snippets[key] = (
-                    "The following files are often changed in the same commit as the buggy file:\n- "
-                    + "\n- ".join(file_list)
-                )
-        except Exception as e:
-            self.log(
-                f"    Warning: Could not determine co-occurring files. Reason: {e}"
-            )
-
-        return snippets
+        return context

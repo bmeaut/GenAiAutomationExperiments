@@ -1,8 +1,11 @@
-Your task is to act as an expert software engineer and fix a bug based on a real-world bug report from a GitHub issue.
+You are an expert software engineer tasked with fixing a real bug from a production codebase.
 
-You will be given the full bug report and the specific, buggy code snippet(s) that were identified as relevant to the fix.
-
-Your goal is to generate a code patch that resolves the issue described in the report. The patch must be in the standard diff format, enclosed in a ```diff markdown block.
+**IMPORTANT INSTRUCTIONS:**
+- Analyze the bug report carefully to understand the root cause
+- Focus ONLY on the minimal changes needed to fix the issue
+- Preserve existing code style and patterns
+- Your patch must be in standard unified diff format
+- Test your logic mentally before providing the fix
 
 ============================================================
 **BUG REPORT**
@@ -10,12 +13,92 @@ Your goal is to generate a code patch that resolves the issue described in the r
 
 **Issue Title:** {issue_title}
 
-**Issue Body:**
+**Issue Description:**
 {issue_body}
 
 ============================================================
-**BUGGY CODE**
+**RELEVANT CODE CONTEXT**
 ============================================================
 {code_context}
 
-Based *only* on the bug report and the provided code, generate the specific patch required to fix the issue.
+============================================================
+**YOUR TASK**
+============================================================
+
+1. **Identify the root cause** of the bug from the issue description
+2. **Locate the problematic code** in the provided context
+3. **Generate a minimal fix** that addresses the issue without breaking existing functionality
+4. **Provide your solution** as a unified diff patch
+
+The patch must be in the standard diff format, enclosed in a ```diff markdown block.
+
+**CRITICAL PATCH REQUIREMENTS:**
+
+**File Headers:**
+- MUST start with: --- a/path/to/file.py
+- MUST have on next line: +++ b/path/to/file.py
+- Use the EXACT file path from the context sections above
+
+**Hunk Headers (@@ lines):**
+- Format: @@ -start,count +start,count @@ optional context
+- Line numbers MUST be accurate
+- Counts MUST match the actual number of lines in the hunk
+- Example: @@ -384,6 +384,11 @@ means:
+  * Start at line 384 in original file
+  * Show 6 lines from original (context + deletions)
+  * Start at line 384 in new file  
+  * Show 11 lines in new file (context + additions)
+
+**Context Lines:**
+- Include EXACTLY 3-5 lines before your changes
+- Include EXACTLY 3-5 lines after your changes
+- Context lines MUST EXACTLY match the file (character-for-character)
+- Pay extreme attention to:
+  * Indentation (spaces vs tabs)
+  * Trailing whitespace
+  * Blank lines
+- Context lines start with a single space: ` context_line`
+
+**Change Lines:**
+- Additions start with +: `+new_line`
+- Deletions start with -: `-old_line`
+- Changed lines show as deletion + addition
+
+**Common Mistakes to Avoid:**
+❌ Using partial/simplified context that doesn't match the actual file
+❌ Wrong indentation (count the spaces!)
+❌ Missing blank lines in context
+❌ Incorrect line numbers in @@ header
+❌ Adding explanatory text before --- or after the last line
+❌ Forgetting the newline at the end
+
+**EXAMPLE OF CORRECT FORMAT:**
+```diff
+--- a/src/example.py
++++ b/src/example.py
+@@ -10,7 +10,10 @@ class Example:
+     def method(self):
+         # context line
+         # context line
+-        old_code = "wrong"
++        new_code = "correct"
++        additional_line = "added"
+         # context line
+         # context line
+```
+
+**STEP-BY-STEP VERIFICATION:**
+Before submitting your patch:
+1. Count the indentation spaces in context lines - do they match?
+2. Check for blank lines - are they included in context?
+3. Verify @@ line numbers point to the correct location
+4. Count context lines: -count should equal (context + deletions), +count should equal (context + additions)
+5. Ensure the patch ends with a newline character
+
+**DEBUGGING CHECKLIST:**
+- [ ] Does this fix address the specific error mentioned?
+- [ ] Are edge cases handled (null/empty values, boundary conditions)?
+- [ ] Will this change break existing functionality?
+- [ ] Is the fix minimal and focused?
+- [ ] Does the context EXACTLY match the file (including indentation)?
+- [ ] Are the @@ line numbers and counts correct?
