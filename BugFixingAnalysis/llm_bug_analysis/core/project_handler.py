@@ -5,147 +5,10 @@ import subprocess
 import tempfile
 import git
 from git import Optional, Repo, Commit as GitCommit, Blob
-from typing import Callable, Dict, Any
-from core import cleanup_manager
+from typing import Callable, Dict, Any, List
+from . import cleanup_manager
 import glob
-
-
-def _extract_code_context(repo: Repo, commit_sha: str, log: Callable) -> Dict[str, Any]:
-    """
-    Look through commit to find the functions/classes that were
-    changed and returns their source code from the parent commit.
-    """
-    commit: GitCommit = repo.commit(commit_sha)
-    if not commit.parents:
-        log("  Warning: Initial commit, cannot extract context.")
-        return {}
-
-    parent: GitCommit = commit.parents[0]
-    diffs = parent.diff(commit, create_patch=True)
-    context_snippets = {}
-
-    for diff in diffs:
-        if not diff.a_path or not str(diff.a_path).endswith(".py"):
-            continue
-        try:
-            buggy_code = (parent.tree / diff.a_path).data_stream.read().decode("utf-8")
-            buggy_code_lines = buggy_code.splitlines()
-            tree = ast.parse(buggy_code)
-
-            # find the line numbers that were changed from the diff patch.
-            changed_lines = set()
-            patch_content = diff.diff
-            if patch_content is None:
-                continue
-
-            patch_text = (
-                bytes(patch_content).decode("utf-8", errors="ignore")
-                if isinstance(patch_content, (bytes, bytearray, memoryview))
-                else patch_content
-            )
-
-            for line in patch_text.splitlines():
-                if line.startswith("@@"):
-                    try:
-                        hunk_info = line.split("@@")[1].strip()
-                        original_file_hunk = hunk_info.split(" ")[0]
-                        line_num = int(
-                            original_file_hunk.split(",")[0].replace("-", "")
-                        )
-                        changed_lines.add(line_num)
-                    except (IndexError, ValueError):
-                        continue
-
-            if not changed_lines:
-                continue
-
-            # find the functions/classes containing these changed lines.
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    start_line, end_line = node.lineno, getattr(
-                        node, "end_lineno", node.lineno
-                    )
-                    if hasattr(node, "decorator_list") and node.decorator_list:
-                        start_line = min(d.lineno for d in node.decorator_list)
-
-                    if any(start_line <= l <= end_line for l in changed_lines):
-                        snippet_lines = buggy_code_lines[start_line - 1 : end_line]
-                        snippet = "\n".join(snippet_lines)
-                        if snippet:
-                            context_key = f"Snippet from {diff.a_path} (lines {start_line}-{end_line})"
-                            context_snippets[context_key] = snippet
-                            break
-        except Exception as e:
-            log(
-                f"    Warning: Could not extract context for {diff.a_path}. Reason: {e}"
-            )
-
-    if not context_snippets:
-        log("    Warning: Could not extract any function/class context.")
-    return context_snippets
-
-
-def _apply_llm_patch(
-    repo: Repo,
-    patch_text: str,
-    original_snippet: str,
-    full_file_path: str,
-    is_full_file: bool,
-    log: Callable,
-) -> bool:
-    """Applies an LLM's patch, handling both snippet replacement and direct file patching."""
-    full_source_path = os.path.join(repo.working_dir, full_file_path)
-
-    # when patching the entire file, use git apply.
-    if is_full_file:
-        log("  Applying patch directly to full file...")
-        patch_file_path = os.path.join(repo.working_dir, "llm.patch")
-        with open(patch_file_path, "w", encoding="utf-8") as f:
-            f.write(patch_text)
-        try:
-            repo.git.apply(["--check", patch_file_path])
-            repo.git.apply(patch_file_path)
-            log("  --> Patch applied successfully.")
-            return True
-        except git.GitCommandError as e:
-            log(f"  --> FAILED to apply patch. Stderr: {e.stderr}")
-            return False
-        finally:
-            os.remove(patch_file_path)
-
-    # when patching a snippet, use 'patch'
-    if original_snippet not in open(full_source_path, "r", encoding="utf-8").read():
-        log("  --> CRITICAL ERROR: Original snippet not found in file. Cannot replace.")
-        return False
-
-    patch_dir = tempfile.mkdtemp()
-    try:
-        snippet_path = os.path.join(patch_dir, "snippet.py")
-        patch_file = os.path.join(patch_dir, "llm.patch")
-        with open(snippet_path, "w", encoding="utf-8") as f:
-            f.write(original_snippet)
-        with open(patch_file, "w", encoding="utf-8") as f:
-            f.write(patch_text)
-
-        command = ["patch", snippet_path, patch_file]
-        result = subprocess.run(command, cwd=patch_dir, capture_output=True, text=True)
-        if result.returncode != 0:
-            log(f"  --> FAILED to apply patch to snippet. Stderr: {result.stderr}")
-            return False
-
-        with open(snippet_path, "r", encoding="utf-8") as f:
-            patched_snippet = f.read()
-        with open(full_source_path, "r", encoding="utf-8") as f:
-            full_buggy_code = f.read()
-
-        new_full_code = full_buggy_code.replace(original_snippet, patched_snippet)
-        with open(full_source_path, "w", encoding="utf-8") as f:
-            f.write(new_full_code)
-
-        log(f"  Successfully updated '{full_file_path}' with the patched snippet.")
-        return True
-    finally:
-        shutil.rmtree(patch_dir)
+from . import context_extraction
 
 
 class ProjectHandler:
@@ -170,6 +33,212 @@ class ProjectHandler:
         self.project_type = "pip"  # will be determined during setup.
 
         cleanup_manager.register_temp_dir(self.repo_path)
+
+    def validate_and_debug_patch_detailed(self, patch_file_path: str) -> Dict[str, Any]:
+        """Enhanced patch validation with detailed analysis."""
+        debug_info = {
+            "valid": False,
+            "errors": [],
+            "warnings": [],
+            "patch_content": "",
+            "analysis": {},
+            "file_analysis": {},
+        }
+
+        try:
+            with open(patch_file_path, "r", encoding="utf-8") as f:
+                patch_content = f.read()
+            debug_info["patch_content"] = patch_content
+
+            if not patch_content.strip():
+                debug_info["errors"].append("Patch file is empty")
+                return debug_info
+
+            # parse patch to analyze each file change
+            file_changes = self._parse_patch_hunks(patch_content)
+            debug_info["file_analysis"] = file_changes
+
+            # check if target files exist and analyze context
+            for file_path, hunks in file_changes.items():
+                full_path = os.path.join(self.repo_path, file_path)
+                if not os.path.exists(full_path):
+                    debug_info["errors"].append(
+                        f"Target file does not exist: {file_path}"
+                    )
+                    continue
+
+                # read current file content
+                with open(full_path, "r", encoding="utf-8") as f:
+                    current_lines = f.readlines()
+
+                # check each hunk
+                for i, hunk in enumerate(hunks):
+                    hunk_analysis = self._analyze_hunk_context(
+                        current_lines, hunk, file_path
+                    )
+                    hunk["analysis"] = hunk_analysis
+
+            # try dry run
+            try:
+                if self.repo is not None:
+                    result = self.repo.git.apply(
+                        ["--check", "--verbose", patch_file_path]
+                    )
+                    debug_info["valid"] = True
+                    debug_info["analysis"]["dry_run"] = "PASSED"
+            except git.GitCommandError as e:
+                debug_info["errors"].append(f"Dry run failed: {e.stderr}")
+                debug_info["analysis"]["dry_run"] = "FAILED"
+                debug_info["analysis"]["git_error"] = str(e.stderr)
+
+            return debug_info
+
+        except Exception as e:
+            debug_info["errors"].append(f"Validation failed: {str(e)}")
+            return debug_info
+
+    def _parse_patch_hunks(self, patch_content: str) -> Dict[str, List[Dict]]:
+        """Parse patch content into structured hunks per file."""
+        import re
+
+        files = {}
+        current_file = None
+        lines = patch_content.splitlines()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            if line.startswith("---"):
+                # extract source file path
+                source_path = line[4:].strip()
+                if source_path.startswith("a/"):
+                    source_path = source_path[2:]
+            elif line.startswith("+++"):
+                # extract target file path
+                target_path = line[4:].strip()
+                if target_path.startswith("b/"):
+                    target_path = target_path[2:]
+                current_file = target_path
+                files[current_file] = []
+            elif line.startswith("@@") and current_file:
+                # parse hunk header
+                match = re.match(
+                    r"@@\s*-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?\s*@@", line
+                )
+                if match:
+                    hunk = {
+                        "old_start": int(match.group(1)),
+                        "old_count": int(match.group(2)) if match.group(2) else 1,
+                        "new_start": int(match.group(3)),
+                        "new_count": int(match.group(4)) if match.group(4) else 1,
+                        "context_before": [],
+                        "removals": [],
+                        "additions": [],
+                        "context_after": [],
+                    }
+
+                    # parse hunk content
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith("@@"):
+                        hunk_line = lines[i]
+                        if hunk_line.startswith(" "):
+                            if not hunk["removals"] and not hunk["additions"]:
+                                hunk["context_before"].append(hunk_line[1:])
+                            else:
+                                hunk["context_after"].append(hunk_line[1:])
+                        elif hunk_line.startswith("-"):
+                            hunk["removals"].append(hunk_line[1:])
+                        elif hunk_line.startswith("+"):
+                            hunk["additions"].append(hunk_line[1:])
+                        i += 1
+
+                    files[current_file].append(hunk)
+                    continue
+
+            i += 1
+
+        return files
+
+    def _analyze_hunk_context(
+        self, file_lines: List[str], hunk: Dict, file_path: str
+    ) -> Dict:
+        """Analyze if a hunk's context matches the actual file."""
+        analysis = {
+            "context_match": False,
+            "line_range_valid": False,
+            "suggested_location": None,
+            "issues": [],
+        }
+
+        start_line = hunk["old_start"] - 1  # Convert to 0-based
+        end_line = start_line + hunk["old_count"]
+
+        # check if line range is valid
+        if start_line >= 0 and end_line <= len(file_lines):
+            analysis["line_range_valid"] = True
+
+            # check context match
+            expected_context = (
+                hunk["context_before"] + hunk["removals"] + hunk["context_after"]
+            )
+            actual_lines = [
+                line.rstrip("\n\r") for line in file_lines[start_line:end_line]
+            ]
+
+            # calculate similarity
+            import difflib
+
+            similarity = difflib.SequenceMatcher(
+                None, expected_context, actual_lines
+            ).ratio()
+
+            if similarity > 0.8:
+                analysis["context_match"] = True
+            else:
+                analysis["issues"].append(f"Context similarity only {similarity:.2f}")
+
+                # try to find better location
+                better_location = self._find_better_hunk_location(file_lines, hunk)
+                if better_location:
+                    analysis["suggested_location"] = better_location
+        else:
+            analysis["issues"].append(
+                f"Line range {start_line}-{end_line} exceeds file length {len(file_lines)}"
+            )
+
+        return analysis
+
+    def _find_better_hunk_location(
+        self, file_lines: List[str], hunk: Dict
+    ) -> Optional[int]:
+        """Find a better location for applying the hunk using fuzzy matching."""
+        import difflib
+
+        search_pattern = hunk["context_before"] + hunk["removals"]
+        if not search_pattern:
+            return None
+
+        best_ratio = 0
+        best_location = None
+
+        # search in a reasonable range around the expected location
+        start_search = max(0, hunk["old_start"] - 20)
+        end_search = min(len(file_lines), hunk["old_start"] + 20)
+
+        for i in range(start_search, end_search - len(search_pattern) + 1):
+            candidate_lines = [
+                line.rstrip("\n\r") for line in file_lines[i : i + len(search_pattern)]
+            ]
+            ratio = difflib.SequenceMatcher(
+                None, search_pattern, candidate_lines
+            ).ratio()
+
+            if ratio > best_ratio and ratio > 0.7:
+                best_ratio = ratio
+                best_location = i + 1  # Convert back to 1-based
+
+        return best_location
 
     def get_human_patch(self, fix_commit_sha: str) -> str:
         """Gets the raw diff/patch string for the human's fix of a specific file."""
@@ -382,51 +451,39 @@ class ProjectHandler:
         if self.repo:
             self.repo.git.reset("--hard", commit_sha)
 
-    def get_relevant_code_context(self, fix_commit_sha: str) -> Dict[str, Any]:
-        """A wrapper that calls the helper function to extract code context."""
-        return (
-            _extract_code_context(self.repo, fix_commit_sha, self.log)
-            if self.repo
-            else {}
-        )
-
-    def apply_patch(
-        self,
-        patch_text: str,
-    ) -> bool:
-        """
-        Applies a standard, potentially multi-file diff patch
-        directly to the repository using 'git apply'.
-        """
-        if not self.repo:
-            self.log("  ERROR: Repository not initialized.")
-            return False
-        if not patch_text:
-            self.log("  ERROR: Empty patch provided.")
+    def apply_patch(self, patch_file_path: str) -> bool:
+        """Applies a patch with multiple fallback strategies."""
+        if not self.repo or not os.path.exists(patch_file_path):
+            self.log("ERROR: Repository not initialized or patch file missing")
             return False
 
-        patch_file_path = os.path.join(self.repo_path, "llm.patch")
-        with open(patch_file_path, "w", encoding="utf-8") as f:
-            f.write(patch_text)
-
+        # strategy 1: direct git apply
         try:
-            # '--check' will test if the patch can be applied cleanly
-            self.log("  Checking if patch can be applied cleanly...")
             self.repo.git.apply(["--check", patch_file_path])
-
-            # if the check passes, apply the patch for real
-            self.log("  --> Patch is valid. Applying now...")
             self.repo.git.apply(patch_file_path)
-            self.log("  --> Patch applied successfully.")
+            self.log("  --> Patch applied successfully (direct)")
             return True
-
         except git.GitCommandError as e:
-            self.log(f"  --> FAILED to apply patch. Git stderr: {e.stderr}")
-            return False
+            self.log(f"  --> Direct apply failed: {e.stderr}")
 
-        finally:
-            if os.path.exists(patch_file_path):
-                os.remove(patch_file_path)
+        # strategy 2: git apply with whitespace fixes
+        try:
+            self.repo.git.apply(["--whitespace=fix", patch_file_path])
+            self.log("  --> Patch applied with whitespace fixes")
+            return True
+        except git.GitCommandError as e:
+            self.log(f"  --> Whitespace fix apply failed: {e.stderr}")
+
+        # strategy 3: git apply ignoring whitespace
+        try:
+            self.repo.git.apply(["--ignore-whitespace", patch_file_path])
+            self.log("  --> Patch applied ignoring whitespace")
+            return True
+        except git.GitCommandError as e:
+            self.log(f"  --> Ignore whitespace apply failed: {e.stderr}")
+
+        self.log("  --> All patch application strategies failed")
+        return False
 
     def _execute_in_venv(
         self,

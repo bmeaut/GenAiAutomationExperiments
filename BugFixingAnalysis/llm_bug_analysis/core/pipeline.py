@@ -1,11 +1,101 @@
 import json
 import csv
 import os
-from . import project_handler, analysis, llm_manager
+import shutil
+from . import project_handler, llm_manager
+from .analysis import analyze_files
+
 from typing import Callable, Dict, Any, Optional
+from git import Repo
 import subprocess
 import datetime
 import threading
+
+
+def gather_and_budget_context(
+    repo: Repo, bug_data: dict, log_callback: Callable, token_budget: int = 4000
+) -> Dict[str, str]:
+    """
+    Runs multiple context strategies and combines them intelligently within a token budget.
+    """
+    from . import project_handler
+    from .context_extraction import (
+        BuggyCodeContextGatherer,
+        StructuralDependencyGatherer,
+        HistoricalContextGatherer,
+    )
+
+    final_snippets = {}
+    total_tokens = 0
+
+    # the buggy code itself must be included.
+    log_callback(
+        "  Running CRITICAL context strategy: Bug Knowledge (Local Code Snippets)"
+    )
+    buggy_code_strategy = BuggyCodeContextGatherer(repo, log_callback)
+    critical_snippets = buggy_code_strategy.gather(bug_data)
+
+    if not critical_snippets:
+        log_callback(
+            "  --> FATAL: Could not extract the primary buggy code. Aborting context gathering."
+        )
+        return {}
+
+    for key, content in critical_snippets.items():
+        snippet_tokens = len(content.split()) * 4 // 3
+        if total_tokens + snippet_tokens > token_budget:
+            log_callback(
+                f"    Warning: Critical snippet '{key[:50]}...' is too large for the budget. Including it anyway and stopping."
+            )
+            final_snippets[key] = content
+            total_tokens += snippet_tokens
+            return (
+                final_snippets  # stop immediately if even critical context is too big
+            )
+
+        final_snippets[key] = content
+        total_tokens += snippet_tokens
+
+    # order of priority: local code, then structural, then historical.
+    supplementary_strategies = [
+        StructuralDependencyGatherer(repo, log_callback),
+        HistoricalContextGatherer(repo, log_callback),
+    ]
+
+    temp_handler = project_handler.ProjectHandler(bug_data["repo_name"], log_callback)
+    temp_handler.repo = repo
+    changed_files = temp_handler.get_changed_files(bug_data["bug_commit_sha"])
+
+    for strategy in supplementary_strategies:
+        if total_tokens >= token_budget:
+            log_callback(
+                "  --> Token budget reached. Stopping supplementary context gathering."
+            )
+            break
+
+        log_callback(f"  Running context strategy: {strategy.name}")
+        try:
+            # pass the changed_files list to the gather method
+            new_snippets = strategy.gather(bug_data, changed_files=changed_files)
+            for key, content in new_snippets.items():
+                # estimate tokens
+                snippet_tokens = len(content.split()) * 4 // 3
+
+                if total_tokens + snippet_tokens > token_budget:
+                    log_callback(
+                        f"    Skipping snippet '{key[:50]}...': Exceeds token budget."
+                    )
+                    continue  # skip this snippet and try the next one
+
+                final_snippets[key] = content
+                total_tokens += snippet_tokens
+        except Exception as e:
+            log_callback(f"    ERROR in strategy {strategy.name}: {e}")
+
+    log_callback(
+        f"  Context gathering complete. Total estimated tokens: {total_tokens}"
+    )
+    return final_snippets
 
 
 def _analyze_patch(patch_text: str) -> Dict[str, int]:
@@ -195,6 +285,7 @@ def _process_bug(
     log_callback: Callable,
     project_root: str,
     config: Dict[str, Any],
+    debug_on_failure: bool = False,
 ):
     """
     This function contains the core analysis logic for a single bug commit.
@@ -222,7 +313,7 @@ def _process_bug(
             for f in all_changed_files
             if os.path.exists(os.path.join(handler.repo_path, f))
         ]
-        results["comp_before"] = analysis.analyze_files(
+        results["comp_before"] = analyze_files(
             handler.repo_path, files_in_before_state, log_callback
         )
         log_callback(
@@ -235,22 +326,144 @@ def _process_bug(
         # 3. handle LLM fix state
         if not skip_llm_fix:
             log_callback("  Evaluating AI Fix...")
+
             # get all relevant code snippets from all changed files
-            buggy_code_context = handler.get_relevant_code_context(fix_sha)
+            if handler.repo:
+                buggy_code_context = gather_and_budget_context(
+                    handler.repo, bug, log_callback
+                )
+            else:
+                log_callback(
+                    "  --> CRITICAL ERROR: Repo object not initialized in handler. Skipping context gathering."
+                )
+                buggy_code_context = {}
+
             if not buggy_code_context:
                 log_callback(
                     "  --> ERROR: Failed to extract any code context for the LLM."
                 )
                 return
 
-            llm_fix_patch = llm_manager.generate_fix_manually(bug, buggy_code_context)
-            ai_patch_stats = _analyze_patch(llm_fix_patch)
-            log_callback(
-                f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
+            llm_response_text = llm_manager.generate_fix_manually(
+                bug, buggy_code_context
             )
 
+            cleaned_patch = llm_manager.extract_patch_from_llm_response(
+                llm_response_text
+            )
+
+            if cleaned_patch is None:
+                log_callback(
+                    "  --> ERROR: Failed to extract valid patch from LLM response."
+                )
+                results["ai_results"] = {
+                    "applied_ok": False,
+                    "tests_passed": False,
+                    "complexity": {
+                        "total_cc": "EXTRACTION_FAILED",
+                        "total_cognitive": "EXTRACTION_FAILED",
+                        "avg_params": "EXTRACTION_FAILED",
+                        "total_tokens": "EXTRACTION_FAILED",
+                    },
+                    "patch_stats": {
+                        "lines_added": 0,
+                        "lines_deleted": 0,
+                        "total": 0,
+                    },
+                }
+                # continue to human fix evaluation
+                handler.reset_to_commit(parent_sha)
+            else:
+
+                ai_patch_stats = _analyze_patch(cleaned_patch)
+                log_callback(
+                    f"  --> AI Patch Stats: +{ai_patch_stats.get('lines_added', 0)} / -{ai_patch_stats.get('lines_deleted', 0)} lines."
+                )
+
+                # patch extraction succeeded, continue with application
+                # the pipeline creates the patch file
+                temp_patch_path = os.path.join(handler.repo_path, "llm.patch")
+                with open(temp_patch_path, "w", encoding="utf-8") as f:
+                    f.write(cleaned_patch)
+
+                # the handler is given a path to the patch file
+                handler.checkout(parent_sha)
+
+                # validation before applying
+                patch_validation = handler.validate_and_debug_patch_detailed(
+                    temp_patch_path
+                )
+
+            # the handler is given a path to the patch file
             handler.checkout(parent_sha)
-            applied_ok = handler.apply_patch(llm_fix_patch)
+
+            # validation before applying
+            patch_validation = handler.validate_and_debug_patch_detailed(
+                temp_patch_path
+            )
+            if not patch_validation["valid"]:
+                log_callback(f"  --> Patch validation failed:")
+                for error in patch_validation["errors"]:
+                    log_callback(f"      ERROR: {error}")
+
+                # log detailed analysis
+                for file_path, analysis in patch_validation.get(
+                    "file_analysis", {}
+                ).items():
+                    log_callback(f"      File: {file_path}")
+                    if isinstance(analysis, dict):
+                        for hunk_key, hunk_analysis in analysis.items():
+                            if hunk_key.startswith("hunk_") and isinstance(
+                                hunk_analysis, dict
+                            ):
+                                issues = hunk_analysis.get("issues", [])
+                                if issues:
+                                    log_callback(
+                                        f"        {hunk_key}: {', '.join(issues)}"
+                                    )
+                                if hunk_analysis.get("suggested_location"):
+                                    log_callback(
+                                        f"        Suggested location: line {hunk_analysis['suggested_location']}"
+                                    )
+
+                # save debug info
+                if debug_on_failure:
+                    debug_dir = os.path.join(project_root, "results", "patch_debug")
+                    os.makedirs(debug_dir, exist_ok=True)
+                    repo_name_safe = bug["repo_name"].replace("/", "_")
+                    debug_file = f"{repo_name_safe}_{fix_sha[:7]}_debug.json"
+                    debug_path = os.path.join(debug_dir, debug_file)
+
+                    with open(debug_path, "w") as f:
+                        json.dump(patch_validation, f, indent=2)
+
+                    log_callback(f"  --> Debug info saved to: {debug_path}")
+
+            applied_ok = handler.apply_patch(temp_patch_path)
+
+            # pause for inspection if patch failed
+            if not applied_ok and debug_on_failure:
+                log_callback("\n" + "=" * 60)
+                log_callback(
+                    ">>> DEBUG MODE: Patch failed to apply. Execution is PAUSED."
+                )
+
+                failed_patches_dir = os.path.join(
+                    project_root, "results", "failed_patches"
+                )
+                os.makedirs(failed_patches_dir, exist_ok=True)
+                repo_name_safe = bug["repo_name"].replace("/", "_")
+                permanent_patch_filename = f"{repo_name_safe}_{fix_sha[:7]}.patch"
+                permanent_patch_path = os.path.join(
+                    failed_patches_dir, permanent_patch_filename
+                )
+
+                shutil.copy(temp_patch_path, permanent_patch_path)
+
+                log_callback(f">>> FAILED PATCH SAVED TO: {permanent_patch_path}")
+                log_callback(f">>> Live Crime Scene: {handler.repo_path}")
+                input(">>> Press Enter in THIS terminal to continue... ")
+                log_callback("=" * 60 + "\n")
 
             ai_tests_passed = False
             ai_comp = {
@@ -265,7 +478,7 @@ def _process_bug(
                     for f in all_changed_files
                     if os.path.exists(os.path.join(handler.repo_path, f))
                 ]
-                ai_comp = analysis.analyze_files(
+                ai_comp = analyze_files(
                     handler.repo_path, files_in_ai_state, log_callback
                 )
 
@@ -286,6 +499,9 @@ def _process_bug(
                 "complexity": ai_comp,
                 "patch_stats": ai_patch_stats,
             }
+
+            log_callback("  Resetting repository to clean 'before' state...")
+            handler.reset_to_commit(parent_sha)
 
         else:
             log_callback("  --> Skipping AI Fix evaluation as requested.")
@@ -310,7 +526,7 @@ def _process_bug(
             for f in all_changed_files
             if os.path.exists(os.path.join(handler.repo_path, f))
         ]
-        human_comp = analysis.analyze_files(
+        human_comp = analyze_files(
             handler.repo_path, files_in_human_state, log_callback
         )
 
@@ -362,6 +578,7 @@ def run(
     single_bug_data: Optional[Dict[str, Any]] = None,
     resume_event: Optional[threading.Event] = None,
     stop_event: Optional[threading.Event] = None,
+    debug_on_failure: bool = False,
 ):
     """The main operator for the analysis pipeline, uses persistent handler for each repository."""
 
@@ -450,6 +667,7 @@ def run(
                     log_callback,
                     project_root,
                     config,
+                    debug_on_failure,
                 )
 
         except Exception as e:
