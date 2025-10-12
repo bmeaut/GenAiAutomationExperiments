@@ -20,22 +20,33 @@ def analyze_files(
     # filter for valid Python file paths.
     py_files = [f for f in filenames if f and f.endswith(".py")]
 
-    lizard_analyzer = lizard.FileAnalyzer(lizard.get_extensions([]))
-
     for filename in py_files:
         full_path = os.path.join(repo_path, filename)
         try:
+            file_cc = 0
+            file_cognitive = 0
+            file_params = 0
+            file_tokens = 0
+            file_func_count = 0
             # lizard for metrics except cognitive complexity
-            lizard_result = lizard.analyze_file(full_path)
+            lizard_analyzer = lizard.FileAnalyzer(lizard.get_extensions([]))
+            lizard_result = lizard_analyzer(full_path)
             for func in lizard_result.function_list:
-                function_count += 1
-                total_cc += func.cyclomatic_complexity
-                total_params += len(func.parameters)
-                total_tokens += func.token_count
+                file_func_count += 1
+                file_cc += func.cyclomatic_complexity
+                file_params += len(func.parameters)
+                file_tokens += func.token_count
 
             # complexipy for cognitive complexity
             complexipy_result = complexipy.file_complexity(full_path)
-            total_cognitive += complexipy_result.complexity
+            file_cognitive += complexipy_result.complexity
+
+            # if all analyses succeeded, add temporary values to totals
+            total_cc += file_cc
+            total_cognitive += file_cognitive
+            total_params += file_params
+            total_tokens += file_tokens
+            function_count += file_func_count
 
         except Exception as e:
             log_callback(f"    Warning: Could not analyze {filename}. Reason: {e}")
