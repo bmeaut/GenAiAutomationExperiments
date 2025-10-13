@@ -1,3 +1,8 @@
+# LLM Interaction
+openai
+anthropic
+google-generativeai
+
 # Core GitHub API and Git interaction
 PyGithub
 GitPython
@@ -17,9 +22,23 @@ uv
 
 # Testing
 pytest
+pytest-mock
 
 # Analysis and Reporting
 pandas
 jupyterlab
 matplotlib
 seaborn
+
+# Diff/Patch Handling
+unidiff
+
+# AST manipulation for code transformation
+libcst
+
+# Fuzzy string matching
+diff-match-patch
+
+# Natural Language Processing
+scikit-learn
+
