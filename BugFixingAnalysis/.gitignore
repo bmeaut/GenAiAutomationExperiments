@@ -17,3 +17,6 @@ venv_cache/
 !/llm_bug_analysis/results/results.csv
     
 /llm_bug_analysis/corpus.json
+
+# backup files
+*.backup
