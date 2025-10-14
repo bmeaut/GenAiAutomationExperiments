@@ -1,12 +1,13 @@
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, simpledialog
+from tkinter import messagebox, scrolledtext, simpledialog, ttk
 import json
 import threading
 from core import corpus_builder, pipeline
 
 
-# ANSI color codes for terminal
-class ANSI:
+class ANSIColor:
+    """ANSI terminal color codes for console output."""
+
     RESET = "\033[0m"
     BOLD = "\033[1m"
     RED = "\033[91m"
@@ -17,189 +18,269 @@ class ANSI:
     GRAY = "\033[90m"
 
 
-class Application(tk.Frame):
+class BugAnalysisGUI(tk.Frame):
     """
-    The main GUI for the LLM Bug Analysis Framework.
-    Builds UI widgets and connects them to the backend logic.
+    Main GUI application for the LLM Bug Analysis Framework.
+
+    Provides interface for:
+    - Managing target repositories
+    - Building bug corpus from GitHub commits
+    - Running AI-assisted bug fix analysis
+    - Comparing AI vs human bug fixes
     """
 
     def __init__(self, master=None):
+
         super().__init__(master)
 
-        self.skip_llm_var = tk.BooleanVar(value=False)
-        self.status_var = tk.StringVar(value="Idle")
+        # analysis options
+        self.dry_run_enabled = tk.BooleanVar(value=False)
+        self.debug_mode_enabled = tk.BooleanVar(value=False)
 
-        # debug freeze on fail
-        self.debug_mode_var = tk.BooleanVar(value=False)
+        self.llm_provider = tk.StringVar(value="manual")
+        self.llm_model = tk.StringVar(value="gemini-2.5-flash")
 
-        # if resume event is set, the thread runs - it pauses on clear
-        self.resume_event = threading.Event()
-        self.resume_event.set()
+        self.pipeline_resume_event = threading.Event()
+        self.pipeline_resume_event.set()
+        self.pipeline_stop_event = threading.Event()
 
-        # if set, the thread should stop
-        self.stop_event = threading.Event()
+        self.status_message = tk.StringVar(value="Idle")
 
-        self.corpus_data = []
+        self.corpus_data: list[dict] = []
 
         self.pack(pady=20, padx=20, fill="both", expand=True)
-        self.create_widgets()
+        self._create_widgets()
+        self._configure_log_colors()
+        self._load_configuration()
+        self._update_model_dropdown_state()
+        self._load_bug_corpus()
 
-        # Tkinter tags for GUI log text coloring
-        self.log_text.tag_config("SUCCESS", foreground="#2E8B57")
-        self.log_text.tag_config("ERROR", foreground="#B22222")
-        self.log_text.tag_config("WARNING", foreground="#DAA520")
-        self.log_text.tag_config("HEADING", foreground="#4682B4")
-        self.log_text.tag_config("INFO", foreground="black")
-        self.log_text.tag_config("DEBUG", foreground="gray50")
+    # pylance says event is unused, but it's needed for the bind call
+    # None is needed for manual call
+    def _on_llm_provider_changed(self, _event: tk.Event | None = None):
+        """Enable/disable model dropdown based on provider selection."""
+        self._update_model_dropdown_state()
 
-        self.load_config()
+    def _update_model_dropdown_state(self):
+        """Update the model dropdown state based on current provider selection."""
+        if self.llm_provider.get() == "manual":
+            self.model_dropdown.config(state="disabled")
+        else:
+            self.model_dropdown.config(state="readonly")
 
-        # load existing corpus if available
-        self.load_corpus_to_gui()
+    def _create_widgets(self):
+        """Build all GUI components."""
+        self._create_repository_section()
+        self._create_control_section()
+        self._create_corpus_viewer()
+        self._create_log_viewer()
+        self._create_status_bar()
 
-    def create_widgets(self):
-
-        # repository management section
+    def _create_repository_section(self):
+        """Create repository management UI section."""
         repo_frame = tk.LabelFrame(self, text="Target Repositories")
         repo_frame.pack(fill="x", expand=False, pady=5)
 
-        self.repo_listbox = tk.Listbox(repo_frame)
-        self.repo_listbox.pack(side="left", fill="both", expand=True)
+        self.repository_listbox = tk.Listbox(repo_frame)
+        self.repository_listbox.pack(side="left", fill="both", expand=True)
 
-        repo_btn_frame = tk.Frame(repo_frame)
-        tk.Button(repo_btn_frame, text="Add", command=self.add_repo).pack(fill="x")
-        tk.Button(repo_btn_frame, text="Remove", command=self.remove_repo).pack(
+        button_container = tk.Frame(repo_frame)
+        tk.Button(button_container, text="Add", command=self._add_repository).pack(
             fill="x"
         )
-        repo_btn_frame.pack(side="right", fill="y")
+        tk.Button(
+            button_container, text="Remove", command=self._remove_repository
+        ).pack(fill="x")
+        button_container.pack(side="right", fill="y")
 
-        # main control buttons section
+    def _create_control_section(self):
+        """Create main control panel UI section."""
         control_frame = tk.LabelFrame(self, text="Controls")
         control_frame.pack(fill="x", expand=False, pady=10)
 
-        # frame for pause/stop
-        run_control_frame = tk.Frame(control_frame)
-        run_control_frame.pack(fill="x", padx=5, pady=5)
+        self._create_pipeline_controls(control_frame)
+        self._create_analysis_options(control_frame)
+        self._create_llm_configuration(control_frame)
+        self._create_action_buttons(control_frame)
+
+    def _create_pipeline_controls(self, parent: tk.Widget):
+        """Create pause/resume/stop pipeline controls."""
+        control_container = tk.Frame(parent)
+        control_container.pack(fill="x", padx=5, pady=5)
 
         self.pause_button = tk.Button(
-            run_control_frame,
+            control_container,
             text="Pause",
-            command=self.pause_pipeline,
+            command=self._pause_analysis_pipeline,
             state=tk.DISABLED,
         )
         self.pause_button.pack(side="left", expand=True, fill="x", padx=2)
 
         self.resume_button = tk.Button(
-            run_control_frame,
+            control_container,
             text="Resume",
-            command=self.resume_pipeline,
+            command=self._resume_analysis_pipeline,
             state=tk.DISABLED,
         )
         self.resume_button.pack(side="left", expand=True, fill="x", padx=2)
 
         self.stop_button = tk.Button(
-            run_control_frame,
+            control_container,
             text="Stop",
-            command=self.stop_pipeline,
+            command=self._stop_analysis_pipeline,
             state=tk.DISABLED,
             fg="red",
         )
         self.stop_button.pack(side="left", expand=True, fill="x", padx=2)
 
-        # frame to hold top-row widgets
-        options_frame = tk.Frame(control_frame)
-        options_frame.pack(fill="x", padx=5, pady=2)
+    def _create_analysis_options(self, parent: tk.Widget):
+        """Create analysis option checkboxes."""
+        options_container = tk.Frame(parent)
+        options_container.pack(fill="x", padx=5, pady=2)
 
         tk.Checkbutton(
-            options_frame,
-            text="Skip LLM Fix (Dry Run to test dependencies)",
-            variable=self.skip_llm_var,
+            options_container,
+            text="Skip LLM Fix (Dry Run)",
+            variable=self.dry_run_enabled,
         ).pack(side="left")
 
         tk.Checkbutton(
-            options_frame,
-            text="Pause on Failure (Debug Mode)",
-            variable=self.debug_mode_var,
+            options_container,
+            text="Pause on Failure (Debug)",
+            variable=self.debug_mode_enabled,
         ).pack(side="left", padx=10)
 
-        tk.Button(options_frame, text="Clear Log", command=self.clear_log).pack(
+        tk.Button(options_container, text="Clear Log", command=self._clear_log).pack(
             side="right"
         )
 
-        # frame to hold main buttons
-        self.actions_frame = tk.Frame(control_frame)
-        self.actions_frame.pack(fill="x", expand=True)
+    def _create_llm_configuration(self, parent: tk.Widget):
+        """Create LLM provider and model selection controls."""
+        llm_container = tk.Frame(parent)
+        llm_container.pack(fill="x", padx=5, pady=5)
+
+        tk.Label(llm_container, text="LLM Provider:").pack(side="left", padx=5)
+
+        provider_selector = ttk.Combobox(
+            llm_container,
+            textvariable=self.llm_provider,
+            values=["manual", "gemini"],
+            state="readonly",
+            width=15,
+        )
+        provider_selector.pack(side="left", padx=5)
+        provider_selector.bind("<<ComboboxSelected>>", self._on_llm_provider_changed)
+
+        tk.Label(llm_container, text="Model:").pack(side="left", padx=5)
+
+        self.model_dropdown = ttk.Combobox(
+            llm_container,
+            textvariable=self.llm_model,
+            values=["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+            state="readonly",
+            width=20,
+        )
+        self.model_dropdown.pack(side="left", padx=5)
+
+        # init dropdown state
+        self._on_llm_provider_changed(None)
+
+    def _create_action_buttons(self, parent: tk.Widget):
+        """Create main action buttons for corpus building and analysis."""
+        self.action_button_container = tk.Frame(parent)
+        self.action_button_container.pack(fill="x", expand=True)
 
         tk.Button(
-            self.actions_frame,
+            self.action_button_container,
             text="1. Build Bug Corpus",
-            command=self.run_corpus_builder,
-        ).pack(fill="x")
-        tk.Button(
-            self.actions_frame,
-            text="2. Run Analysis Pipeline",
-            command=self.run_pipeline,
+            command=self._build_bug_corpus,
         ).pack(fill="x")
 
-        # corpus viewer and single run
+        tk.Button(
+            self.action_button_container,
+            text="2. Run Analysis Pipeline",
+            command=self._run_full_analysis,
+        ).pack(fill="x")
+
+    def _create_corpus_viewer(self):
+        """Create bug corpus viewer and single commit runner."""
         corpus_frame = tk.LabelFrame(self, text="Bug Corpus")
         corpus_frame.pack(fill="both", expand=True, pady=5)
 
         self.corpus_listbox = tk.Listbox(corpus_frame, height=8)
         self.corpus_listbox.pack(side="left", fill="both", expand=True)
 
-        corpus_controls_frame = tk.Frame(corpus_frame)
+        controls_container = tk.Frame(corpus_frame)
         tk.Button(
-            corpus_controls_frame, text="Run Selected", command=self.run_selected_commit
+            controls_container,
+            text="Run Selected",
+            command=self._run_selected_bug_analysis,
         ).pack(fill="x", pady=2)
-        corpus_controls_frame.pack(side="right", fill="y", padx=5)
+        controls_container.pack(side="right", fill="y", padx=5)
 
-        # log viewer section
+    def _create_log_viewer(self):
+        """Create scrollable log viewer."""
         log_frame = tk.LabelFrame(self, text="Logs")
         log_frame.pack(fill="both", expand=True, pady=5)
-        self.log_text = scrolledtext.ScrolledText(
+
+        self.log_viewer = scrolledtext.ScrolledText(
             log_frame, state="disabled", height=15
         )
-        self.log_text.pack(fill="both", expand=True)
+        self.log_viewer.pack(fill="both", expand=True)
 
+    def _create_status_bar(self):
+        """Create bottom status bar."""
         status_bar = tk.Label(
-            self, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W
+            self, textvariable=self.status_message, bd=1, relief=tk.SUNKEN, anchor=tk.W
         )
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def pause_pipeline(self):
+    def _configure_log_colors(self):
+        """Configure color tags for log viewer."""
+        self.log_viewer.tag_config("SUCCESS", foreground="#2E8B57")
+        self.log_viewer.tag_config("ERROR", foreground="#B22222")
+        self.log_viewer.tag_config("WARNING", foreground="#DAA520")
+        self.log_viewer.tag_config("HEADING", foreground="#4682B4")
+        self.log_viewer.tag_config("INFO", foreground="black")
+        self.log_viewer.tag_config("DEBUG", foreground="gray50")
+
+    def _pause_analysis_pipeline(self):
         """Clears the resume event, causing the pipeline to wait."""
-        if self.resume_event.is_set():
-            self.resume_event.clear()
-            self.set_status("Paused...")
+        if self.pipeline_resume_event.is_set():
+            self.pipeline_resume_event.clear()
+            self._set_status("Paused...")
             self.pause_button.config(state=tk.DISABLED)
             self.resume_button.config(state=tk.NORMAL)
-            self.log(">>> Pipeline paused by user. Click 'Resume' to continue.")
+            self._log_message(
+                ">>> Pipeline paused by user. Click 'Resume' to continue."
+            )
 
-    def resume_pipeline(self):
+    def _resume_analysis_pipeline(self):
         """Sets the resume event, allowing the pipeline to continue."""
-        if not self.resume_event.is_set():
-            self.resume_event.set()
-            self.set_status("Busy: Resuming analysis...")
+        if not self.pipeline_resume_event.is_set():
+            self.pipeline_resume_event.set()
+            self._set_status("Busy: Resuming analysis...")
             self.pause_button.config(state=tk.NORMAL)
             self.resume_button.config(state=tk.DISABLED)
-            self.log(">>> Pipeline resumed by user.")
+            self._log_message(">>> Pipeline resumed by user.")
 
-    def stop_pipeline(self):
+    def _stop_analysis_pipeline(self):
         """Sets the stop event, signaling the pipeline to terminate gracefully."""
-        self.set_status("Stopping...")
+        self._set_status("Stopping...")
         # this way the thread isn't stuck paused when trying to stop
-        self.resume_event.set()
-        self.stop_event.set()
-        self._set_running_state(False)  # disable buttons
-        self.log(">>> Stop signal sent. The pipeline will halt after the current task.")
+        self.pipeline_resume_event.set()
+        self.pipeline_stop_event.set()
+        self._toggle_analysis_controls(False)  # disable buttons
+        self._log_message(
+            ">>> Stop signal sent. The pipeline will halt after the current task."
+        )
 
-    def _set_running_state(self, is_running: bool):
+    def _toggle_analysis_controls(self, is_running: bool):
         """Helper to enable/disable all relevant buttons when a task starts/stops."""
         action_button_state = tk.DISABLED if is_running else tk.NORMAL
 
         # disable while task is running
-        for child in self.actions_frame.winfo_children():
+        for child in self.action_button_container.winfo_children():
             if isinstance(child, (tk.Button, tk.Checkbutton, tk.Radiobutton)):
                 child.config(state=action_button_state)
 
@@ -208,16 +289,16 @@ class Application(tk.Frame):
         # resume should always be disabled when a task is not paused
         self.resume_button.config(state=tk.DISABLED)
 
-    def clear_log(self):
+    def _clear_log(self):
         """Clears all text from the log viewer widget."""
-        # widget must be made 'normal' to modify it, then 'disabled' again.
-        self.log_text.config(state="normal")
-        self.log_text.delete("1.0", tk.END)  # '1.0' means line 1, character 0
-        self.log_text.config(state="disabled")
+        # widget must be 'normal' to modify it, then 'disabled' again.
+        self.log_viewer.config(state="normal")
+        self.log_viewer.delete("1.0", tk.END)  # '1.0' means line 1, character 0
+        self.log_viewer.config(state="disabled")
 
-    def add_repo(self):
+    def _add_repository(self):
         repo_name = simpledialog.askstring(
-            "Add Repository", "Enter repository URL or name (e.g., tiangolo/fastapi):"
+            "Add Repository", "Enter repository URL or name (e.g., Textualize/rich):"
         )
 
         if repo_name:
@@ -227,29 +308,35 @@ class Application(tk.Frame):
             else:
                 full_url = repo_name
 
-            self.repo_listbox.insert(tk.END, full_url)
-            self.save_config()
+            self.repository_listbox.insert(tk.END, full_url)
+            self._save_configuration()
 
-    def remove_repo(self):
-        selected = self.repo_listbox.curselection()
+    def _remove_repository(self):
+        selected = self.repository_listbox.curselection()
         if selected:
-            self.repo_listbox.delete(selected[0])
-            self.save_config()
+            self.repository_listbox.delete(selected[0])
+            self._save_configuration()
 
-    def load_config(self):
+    def _load_configuration(self):
         try:
             with open("config.json", "r") as f:
                 config = json.load(f)
-                self.repo_listbox.delete(0, tk.END)  # clear existing entries first
+                self.repository_listbox.delete(
+                    0, tk.END
+                )  # clear existing entries first
                 for repo in config.get("repositories", []):
-                    self.repo_listbox.insert(tk.END, repo)
-        except FileNotFoundError:
-            self.log("config.json not found. Using defaults.")
-        except json.JSONDecodeError:
-            self.log("ERROR: Could not parse config.json.")
+                    self.repository_listbox.insert(tk.END, repo)
 
-    def save_config(self):
-        repos = list(self.repo_listbox.get(0, tk.END))
+                self.llm_provider.set(config.get("llm_provider", "manual"))
+                self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
+
+        except FileNotFoundError:
+            self._log_message("config.json not found. Using defaults.")
+        except json.JSONDecodeError:
+            self._log_message("ERROR: Could not parse config.json.")
+
+    def _save_configuration(self):
+        repos = list(self.repository_listbox.get(0, tk.END))
         config_data = {}
         # read the existing config first to avoid overwriting other settings
         try:
@@ -259,150 +346,119 @@ class Application(tk.Frame):
             pass
 
         config_data["repositories"] = repos
+        config_data["llm_provider"] = self.llm_provider.get()
+        config_data["llm_model"] = self.llm_model.get()
+
         with open("config.json", "w") as f:
             json.dump(config_data, f, indent=2)
 
-    def set_status(self, message: str):
+    def _set_status(self, message: str):
         """Updates the status bar's text."""
         # after: ensures the GUI update happens on the main thread
-        self.master.after(0, lambda: self.status_var.set(message))
+        self.master.after(0, lambda: self.status_message.set(message))
 
-    def log(self, message: str):
+    def _log_message(self, message: str):
         """
-        Analyzes message to determine log level, then prints
-        a colored, tagged version into the GUI log box.
+        Log a message with automatic color coding based on content.
+        Outputs to both GUI log viewer and console.
         """
-        tag = "INFO"
-        console_color = ANSI.RESET
+        log_tag, console_color = self._classify_log_message(message)
 
-        stripped_message = message.lstrip()
+        print(f"{console_color}{message}{ANSIColor.RESET}")
 
-        if (
-            "FATAL ERROR" in stripped_message
-            or "CRITICAL FAILURE" in stripped_message
-            or "FAILED" in stripped_message
+        def update_gui_log():
+            self.log_viewer.config(state="normal")
+            self.log_viewer.insert(tk.END, message + "\n", log_tag)
+            self.log_viewer.config(state="disabled")
+            self.log_viewer.see(tk.END)
+
+        self.master.after(0, update_gui_log)
+
+    def _classify_log_message(self, message: str) -> tuple[str, str]:
+        """
+        Classify log message to determine appropriate tag and color.
+        """
+        stripped = message.lstrip()
+
+        if any(
+            keyword in stripped
+            for keyword in ["FATAL ERROR", "CRITICAL FAILURE", "FAILED"]
         ):
-            tag = "ERROR"
-            console_color = ANSI.RED
-        elif (
-            "Tests PASSED" in stripped_message
-            or "--> Success" in stripped_message
-            or "Found FUNCTIONAL fix" in stripped_message
+            return "ERROR", ANSIColor.RED
+
+        if any(
+            keyword in stripped
+            for keyword in ["Tests PASSED", "--> Success", "Found FUNCTIONAL fix"]
         ):
-            tag = "SUCCESS"
-            console_color = ANSI.GREEN
-        elif "Warning:" in stripped_message:
-            tag = "WARNING"
-            console_color = ANSI.YELLOW
-        elif (
-            stripped_message.startswith("---")
-            or "Processing repository:" in stripped_message
-        ):
-            tag = "HEADING"
-            console_color = ANSI.BLUE
-        elif "[DEBUG]" in stripped_message:
-            tag = "DEBUG"
-            console_color = ANSI.GRAY
-        else:
-            tag = "INFO"
-            console_color = ANSI.RESET
+            return "SUCCESS", ANSIColor.GREEN
 
-        # debug for GUI issues
-        print(f"{console_color}{message}{ANSI.RESET}")
+        if "Warning:" in stripped:
+            return "WARNING", ANSIColor.YELLOW
 
-        def _update_gui_log(msg, tag_to_apply):
-            self.log_text.config(state="normal")
-            self.log_text.insert(tk.END, msg + "\n", tag_to_apply)
-            self.log_text.config(state="disabled")
-            self.log_text.see(tk.END)
+        if stripped.startswith("---") or "Processing repository:" in stripped:
+            return "HEADING", ANSIColor.BLUE
 
-        self.master.after(0, lambda: _update_gui_log(message, tag))
+        if "[DEBUG]" in stripped:
+            return "DEBUG", ANSIColor.GRAY
 
-    def run_corpus_builder(self):
-        self.set_status("Busy: Building bug corpus...")
+        return "INFO", ANSIColor.RESET
 
-        def _build_and_update_status():
-            corpus_builder.build(self.log)
-            # runs after the build is complete
-            self.load_corpus_to_gui()
-            self.set_status("Idle")
+    def _build_bug_corpus(self):
+        """Build bug corpus from configured repositories."""
+        self._set_status("Busy: Building bug corpus...")
+        self._save_configuration()
 
-        threading.Thread(target=_build_and_update_status, daemon=True).start()
+        def build_task():
+            corpus_builder.build(self._log_message)
+            self._load_bug_corpus()
+            self._set_status("Idle")
 
-    def load_corpus_to_gui(self):
-        """Loads corpus.json data and populates the listbox."""
+        threading.Thread(target=build_task, daemon=True).start()
+
+    def _load_bug_corpus(self):
+        """Load bug corpus data from corpus.json and populate viewer."""
         self.corpus_listbox.delete(0, tk.END)
-        self.corpus_data = []
-        try:
-            with open("corpus.json", "r") as f:
-                self.corpus_data = json.load(f)
+        self.bug_corpus = []
 
-            for i, bug in enumerate(self.corpus_data):
-                display_text = (
-                    f"{i+1:03d}: {bug['repo_name']} - {bug['commit_message']}"
-                )
+        try:
+            with open("corpus.json", "r") as corpus_file:
+                self.bug_corpus = json.load(corpus_file)
+
+            for index, bug_data in enumerate(self.bug_corpus):
+                display_text = f"{index+1:03d}: {bug_data['repo_name']} - {bug_data['commit_message']}"
                 self.corpus_listbox.insert(tk.END, display_text)
-            self.log(
-                f"Successfully loaded {len(self.corpus_data)} bugs into the corpus viewer."
+
+            self._log_message(
+                f"Successfully loaded {len(self.bug_corpus)} bugs into the corpus viewer."
             )
         except (FileNotFoundError, json.JSONDecodeError):
-            self.log("Could not load corpus.json. Please build the corpus.")
+            self._log_message("Could not load corpus.json. Please build the corpus.")
 
-    def run_selected_commit(self):
-        """Runs the analysis pipeline for only the selected commit."""
-        selected_indices = self.corpus_listbox.curselection()
-        if not selected_indices:
+    def _run_selected_bug_analysis(self):
+        """Run analysis pipeline for a single selected bug from corpus."""
+        selection = self.corpus_listbox.curselection()
+
+        if not selection:
             messagebox.showwarning(
                 "No Selection", "Please select a commit from the corpus list to run."
             )
             return
 
-        if not self.corpus_data:
+        if not self.bug_corpus:
             messagebox.showerror(
                 "Error", "Corpus data is not loaded. Please build the corpus first."
             )
             return
 
-        selected_index = selected_indices[0]
-        selected_bug_data = self.corpus_data[selected_index]
+        selected_bug = self.bug_corpus[selection[0]]
+        self._run_analysis_pipeline(single_bug=selected_bug)
 
-        # reset for clear run
-        self.stop_event.clear()
-        self.resume_event.set()
-
-        debug_on_failure = self.debug_mode_var.get()
-        skip_llm_fix = self.skip_llm_var.get()
-        if skip_llm_fix:
-            self.set_status(f"Busy: Running single commit (Dry Run)...")
-        else:
-            self.set_status(f"Busy: Running single commit (Full Run)...")
-
-        def _task_wrapper():
-            self._set_running_state(True)
-            try:
-                # run for specific commit only
-                pipeline.run(
-                    self.log,
-                    self.skip_llm_var.get(),
-                    single_bug_data=selected_bug_data,
-                    resume_event=self.resume_event,
-                    stop_event=self.stop_event,
-                    debug_on_failure=debug_on_failure,
-                )
-            finally:
-                self._set_running_state(False)
-                self.set_status("Idle")
-                if not self.stop_event.is_set():
-                    self.log(f">>> Single commit analysis finished.")
-
-        threading.Thread(target=_task_wrapper, daemon=True).start()
-
-    def run_pipeline(self):
-        """Runs the analysis pipeline for the entire corpus"""
+    def _run_full_analysis(self):
+        """Run analysis pipeline for the entire bug corpus."""
         try:
-            with open("corpus.json") as f:
-                if not json.load(f):
-                    self.log(
+            with open("corpus.json") as corpus_file:
+                if not json.load(corpus_file):
+                    self._log_message(
                         "ERROR: corpus.json is empty. Please build the corpus first."
                     )
                     messagebox.showerror(
@@ -410,41 +466,66 @@ class Application(tk.Frame):
                     )
                     return
         except (FileNotFoundError, json.JSONDecodeError):
-            self.log(
-                "ERROR: corpus.json not found or is invalid. Please build the corpus first."
+            self._log_message(
+                "ERROR: corpus.json not found or invalid. Please build the corpus first."
             )
             messagebox.showerror(
-                "Error",
-                "Corpus not found or is invalid. Please build the corpus first.",
+                "Error", "Corpus not found or invalid. Please build the corpus first."
             )
             return
 
-        # reset for clear run
-        self.stop_event.clear()
-        self.resume_event.set()
+        self._run_analysis_pipeline(single_bug=None)
 
-        debug_on_failure = self.debug_mode_var.get()
-        if self.skip_llm_var.get():
-            self.set_status("Busy: Running analysis pipeline (Dry Run)...")
+    def _run_analysis_pipeline(self, single_bug: dict | None = None):
+        """
+        Run the analysis pipeline in a background thread.
+        If single_bug is provided, only that bug is processed.
+        """
+        self._reset_pipeline_state()
+        self._save_configuration()
+
+        provider = self.llm_provider.get()
+        is_dry_run = self.dry_run_enabled.get()
+
+        if single_bug:
+            status = (
+                f"Busy: Running single commit with {provider}..."
+                if not is_dry_run
+                else "Busy: Running single commit (Dry Run)..."
+            )
+            completion_message = ">>> Single commit analysis finished."
         else:
-            self.set_status("Busy: Running analysis pipeline (Full Run)...")
+            status = (
+                f"Busy: Running pipeline with {provider}..."
+                if not is_dry_run
+                else "Busy: Running analysis pipeline (Dry Run)..."
+            )
+            completion_message = ">>> Full pipeline finished."
 
-        def _task_wrapper():
-            self._set_running_state(True)
+        self._set_status(status)
+
+        def analysis_task():
+            self._toggle_analysis_controls(is_running=True)
             try:
-
                 pipeline.run(
-                    self.log,
-                    self.skip_llm_var.get(),
-                    single_bug_data=None,  # process all commits
-                    resume_event=self.resume_event,
-                    stop_event=self.stop_event,
-                    debug_on_failure=debug_on_failure,
+                    self._log_message,
+                    skip_llm_fix=is_dry_run,
+                    single_bug_data=single_bug,
+                    resume_event=self.pipeline_resume_event,
+                    stop_event=self.pipeline_stop_event,
+                    debug_on_failure=self.debug_mode_enabled.get(),
+                    llm_provider=provider,
+                    llm_model=self.llm_model.get(),
                 )
             finally:
-                self._set_running_state(False)
-                self.set_status("Idle")
-                if not self.stop_event.is_set():
-                    self.log(">>> Full pipeline finished.")
+                self._toggle_analysis_controls(is_running=False)
+                self._set_status("Idle")
+                if not self.pipeline_stop_event.is_set():
+                    self._log_message(completion_message)
 
-        threading.Thread(target=_task_wrapper, daemon=True).start()
+        threading.Thread(target=analysis_task, daemon=True).start()
+
+    def _reset_pipeline_state(self):
+        """Reset pipeline control events for a new run."""
+        self.pipeline_stop_event.clear()
+        self.pipeline_resume_event.set()
