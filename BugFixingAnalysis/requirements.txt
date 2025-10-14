@@ -6,14 +6,11 @@
 #
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.69.0
-    # via -r requirements.in
 anyio==4.11.0
     # via
-    #   anthropic
+    #   google-genai
     #   httpx
     #   jupyter-server
-    #   openai
 argon2-cffi==25.1.0
     # via jupyter-server
 argon2-cffi-bindings==25.1.0
@@ -82,12 +79,6 @@ diff-match-patch==20241021
     # via -r requirements.in
 distlib==0.4.0
     # via virtualenv
-distro==1.9.0
-    # via
-    #   anthropic
-    #   openai
-docstring-parser==0.17.0
-    # via anthropic
 dulwich==0.24.2
     # via poetry
 executing==2.2.1
@@ -110,49 +101,18 @@ gitdb==4.0.12
     # via gitpython
 gitpython==3.1.45
     # via -r requirements.in
-google-ai-generativelanguage==0.6.15
-    # via google-generativeai
-google-api-core[grpc]==2.26.0
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-python-client
-    #   google-generativeai
-google-api-python-client==2.184.0
-    # via google-generativeai
 google-auth==2.41.1
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
-    #   google-api-python-client
-    #   google-auth-httplib2
-    #   google-generativeai
-google-auth-httplib2==0.2.0
-    # via google-api-python-client
-google-generativeai==0.8.5
+    # via google-genai
+google-genai==1.43.0
     # via -r requirements.in
-googleapis-common-protos==1.70.0
-    # via
-    #   google-api-core
-    #   grpcio-status
-grpcio==1.75.1
-    # via
-    #   google-api-core
-    #   grpcio-status
-grpcio-status==1.71.2
-    # via google-api-core
 h11==0.16.0
     # via httpcore
 httpcore==1.0.9
     # via httpx
-httplib2==0.31.0
-    # via
-    #   google-api-python-client
-    #   google-auth-httplib2
 httpx==0.28.1
     # via
-    #   anthropic
+    #   google-genai
     #   jupyterlab
-    #   openai
     #   pbs-installer
 idna==3.10
     # via
@@ -190,10 +150,6 @@ jinja2==3.1.6
     #   jupyterlab
     #   jupyterlab-server
     #   nbconvert
-jiter==0.11.0
-    # via
-    #   anthropic
-    #   openai
 joblib==1.5.2
     # via scikit-learn
 json5==0.12.1
@@ -296,8 +252,6 @@ numpy==2.3.3
     #   scikit-learn
     #   scipy
     #   seaborn
-openai==2.3.0
-    # via -r requirements.in
 packaging==25.0
     # via
     #   build
@@ -345,18 +299,6 @@ prometheus-client==0.23.1
     # via jupyter-server
 prompt-toolkit==3.0.52
     # via ipython
-proto-plus==1.26.1
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
-protobuf==5.29.5
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
-    #   google-generativeai
-    #   googleapis-common-protos
-    #   grpcio-status
-    #   proto-plus
 psutil==7.1.0
     # via ipykernel
 ptyprocess==0.7.0
@@ -374,10 +316,7 @@ pyasn1-modules==0.4.2
 pycparser==2.23
     # via cffi
 pydantic==2.12.0
-    # via
-    #   anthropic
-    #   google-generativeai
-    #   openai
+    # via google-genai
 pydantic-core==2.41.1
     # via pydantic
 pygithub==2.8.1
@@ -395,9 +334,7 @@ pyjwt[crypto]==2.10.1
 pynacl==1.6.0
     # via pygithub
 pyparsing==3.2.5
-    # via
-    #   httplib2
-    #   matplotlib
+    # via matplotlib
 pyproject-hooks==1.2.0
     # via
     #   build
@@ -441,7 +378,7 @@ referencing==0.36.2
 requests==2.32.5
     # via
     #   cachecontrol
-    #   google-api-core
+    #   google-genai
     #   jupyterlab-server
     #   poetry
     #   pygithub
@@ -488,14 +425,13 @@ six==1.17.0
 smmap==5.0.2
     # via gitdb
 sniffio==1.3.1
-    # via
-    #   anthropic
-    #   anyio
-    #   openai
+    # via anyio
 soupsieve==2.8
     # via beautifulsoup4
 stack-data==0.6.3
     # via ipython
+tenacity==9.1.2
+    # via google-genai
 terminado==0.18.1
     # via
     #   jupyter-server
@@ -517,10 +453,6 @@ tornado==6.5.2
     #   jupyter-server
     #   jupyterlab
     #   terminado
-tqdm==4.67.1
-    # via
-    #   google-generativeai
-    #   openai
 traitlets==5.14.3
     # via
     #   ipykernel
@@ -542,12 +474,9 @@ types-python-dateutil==2.9.0.20251008
     # via arrow
 typing-extensions==4.15.0
     # via
-    #   anthropic
     #   anyio
     #   beautifulsoup4
-    #   google-generativeai
-    #   grpcio
-    #   openai
+    #   google-genai
     #   pydantic
     #   pydantic-core
     #   pygithub
@@ -562,8 +491,6 @@ unidiff==0.7.5
     # via -r requirements.in
 uri-template==1.3.0
     # via jsonschema
-uritemplate==4.2.0
-    # via google-api-python-client
 urllib3==2.5.0
     # via
     #   dulwich
@@ -583,6 +510,8 @@ webencodings==0.5.1
     #   tinycss2
 websocket-client==1.9.0
     # via jupyter-server
+websockets==15.0.1
+    # via google-genai
 zstandard==0.25.0
     # via pbs-installer
 

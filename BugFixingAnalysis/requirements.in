@@ -1,7 +1,5 @@
 # LLM Interaction
-openai
-anthropic
-google-generativeai
+google-genai
 
 # Core GitHub API and Git interaction
 PyGithub

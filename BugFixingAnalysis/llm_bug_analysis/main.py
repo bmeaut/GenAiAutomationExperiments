@@ -2,7 +2,7 @@
 
 import tkinter as tk
 from tkinter import messagebox
-from gui.app import Application
+from gui.app import BugAnalysisGUI
 import threading
 
 
@@ -13,7 +13,7 @@ def main():
     root.geometry("800x1000")
     root.resizable(True, True)
 
-    app = Application(master=root)
+    app = BugAnalysisGUI(master=root)
     app.pack(fill="both", expand=True)
 
     def on_closing():

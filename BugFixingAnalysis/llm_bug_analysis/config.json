@@ -43,6 +43,8 @@
   ],
   "test_command": "pytest",
   "max_commits_per_repo": 3,
+  "llm_provider": "gemini",
+  "llm_model": "gemini-2.5-pro",
   "test_exclusions": {
     "Delgan/loguru": {
       "ignore_paths": [
