@@ -70,3 +70,38 @@ Kerestem kapcsolódó forrásokat, melyeket fel szeretnék dolgozni, mielőtt ja
 - *[Bug Fixing with Broader Context: Enhancing LLM-Based Program Repair via Layered Knowledge Injection](https://arxiv.org/html/2506.24015v1)*
 - *[Large Language Models Meet Automated Program Repair: Innovations, Challenges and Solutions](https://www.researchgate.net/publication/387253731_Large_Language_Models_Meet_Automated_Program_Repair_Innovations_Challenges_and_Solutions/fulltext/6765655b894c5520851f2f95/Large-Language-Models-Meet-Automated-Program-Repair-Innovations-Challenges-and-Solutions.pdf)*
 - *[On the Role of Context Granularity in LLM-Driven Program Repair](https://mlforsystems.org/assets/papers/neurips2024/paper23.pdf)*
+
+# 6. heti "Work Out Loud"
+## Mivel foglalkoztam eddig: egész jól utolértem magam
+Tovább fejlesztettem a Python toolt, amivel LLM-ek szoftverhiba javítási képességeit vizsgálom.
+- Refaktoráltam a legtöbb modult, néhány rész még hátra van
+	- Bölcsebb lett volna a publikáció olvasás, design, programozás sorrendben haladni, nem fordítva.
+- Pár új funkció:
+    - API integráció: GUI-ból választható modell (Gemini 2.5 Pro/Flash/Flash-Lite, mert ez ingyenes Google AI Studioban)
+        - Új elmentett adat: LLM modell, válasz idő, token használat
+    - Ha egy PR-ban vagy issueban hivatkoznak egy másik issuera, azt is begyűjti a tool
+    - Javított kontextus kinyerés: átgondoltan választott kódrészlet, hívási struktúra, git history, stb.
+    - Választ eddig ```diff``` formátumban vártam, semmilyen prompttal nem sikerült konzisztensen szintaktikailag helyes diffet kapni, egy inkább JSON-t kérek és abból generálom a diffet, ez sokkal megbízhatóbb eddig.
+    - Ha már `pytest`-et használok minden tesztelt repóhoz, ideje volt nekem is elkezdeni tesztelni a kódot, ahogyan nőtt a mérete. Azért is volt szükség refaktorálásra, hogy könnyebben lehessen tesztelni.
+
+Projekt végén az begyűjtött adatokat elemezni kell: **Jupyter notebook**kal ismerkedtem, hogy `pandas` és `matplotlib` segítségével **szép formában tudjak majd kimutatásokat készíteni** Pythonban. Futtatható Python kód snippeteket és szöveget tartalmaz, célszerűnek tartom hogy a végső adathalmaz elemzését ellenőrizni lehessen:
+- Beüzemeltem ezért egy kezdetleges **GitHub Pages oldal**t: https://engemkeres.github.io/llm-analysis-thesis/
+- Az `analysis.ipynb` fájlból **GitHub Action** segítségével **Quarto**t használva egy statikus HTML-t generálok.
+- Mivel statikus az oldal, de egyszerű ellenőrizhetőséget akartam, így hozzáadtam egy **Google Colabs** gombot az oldalhoz, ami segítségével bárki bármilyen telepítés nélkül tudja futtatni az `analysis.ipynb` tartalmát, automatikusan elérhető Colabban a `results.csv` is, ami az oldal repójában található.
+- Készítettem egy **bash script**et, ami:
+    - Átmásolja az `analysis.ipynb` és a `results.csv` fájlokat a GitHub Pages oldalhoz tartozó lokális repóba.
+    - Automatikus commit+push, ami elindítja a GitHub Actions deployt, hogy a Jupyter fájlból a `Quarto` statikus weboldalt generáljon. (Azért van másik repoban a GitHub Pages oldal, mert nem akartam elsőre valamit elrontani a közös repóban)
+
+Illetve feldolgoztam az összegyűjtött publikációkat.
+
+## Mivel fogok foglalkozni jövő héten
+- Refaktorálás folytatása
+- Jobban belebújtam a publikációkba, így van pár ötlet, hogy milyen irányba lehetne javítani a kontextus kinyerést
+- `mini-SWE-agent` integráció, hogy a diff generálás helyett a modell maga szerkessze a fájlokat?
+- `pytest` tesztek írása
+- Analízis gyorsítási tervek, ha minden más jól működik:
+    - párhuzamosítás: több repó, commit egyszerre, ha bírja a gépem
+    - batch LLM API hívások
+    - incremental environment setup: amíg összeszedem a bug kontextust, elég a leklónozott repo, nem kell a test setupnak elérhetőnek lennie, az készülhet addig, amíg az LLM válaszra várok
+    - csak releváns tesztek futtatása, nem az összes
+    - `pytest` optimalizálás
