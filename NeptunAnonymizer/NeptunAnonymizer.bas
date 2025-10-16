@@ -1,9 +1,8 @@
 Attribute VB_Name = "NeptunAnonymizer"
-Attribute VB_Name = "NeptunAnonymizer"
 Option Explicit
 
 ' Main subroutine to anonymize Neptun codes in selected column
-Sub AnonymizeNeptunCodes()
+Sub TartomanyAnonimizalas()
     Dim saltValue As String
     Dim selectedRange As Range
     Dim cell As Range
@@ -16,13 +15,13 @@ Sub AnonymizeNeptunCodes()
     Set ws = ActiveSheet
     
     ' Prompt user for salt value
-    saltValue = InputBox("Enter salt value for anonymization:" & vbCrLf & _
-                        "(Use the same salt for all worksheets to maintain compatibility)", _
-                        "Neptun Code Anonymization")
+    saltValue = InputBox("Adja meg a só értéket az anonimizáláshoz:" & vbCrLf & _
+                        "(Használja ugyanazt a só értéket minden munkalaphoz a kompatibilitás megőrzéséhez)", _
+                        "Neptun Kód Anonimizálás")
     
     ' Check if user cancelled or entered empty salt
     If saltValue = "" Then
-        MsgBox "Anonymization cancelled. Salt value is required.", vbExclamation, "Cancelled"
+        MsgBox "Anonimizálás megszakítva. Só érték megadása kötelező.", vbExclamation, "Megszakítva"
         Exit Sub
     End If
     
@@ -32,8 +31,8 @@ Sub AnonymizeNeptunCodes()
             If Selection.Cells.Count > 0 And Not IsEmpty(Selection.Cells(1, 1).value) Then
                 ' Ask user if they want to use the current selection
                 Dim useSelection As VbMsgBoxResult
-                useSelection = MsgBox("Use currently selected range?" & vbCrLf & _
-                                    Selection.Address, vbYesNo + vbQuestion, "Use Selection?")
+                useSelection = MsgBox("Használja a jelenleg kijelölt tartományt?" & vbCrLf & _
+                                    Selection.Address, vbYesNo + vbQuestion, "Kijelölés használata?")
                 If useSelection = vbYes Then
                     Set selectedRange = Selection
                 End If
@@ -50,9 +49,9 @@ Sub AnonymizeNeptunCodes()
             lastRow = ws.Cells(ws.Rows.Count, detectedColumn).End(xlUp).row
             
             Dim useDetected As VbMsgBoxResult
-            useDetected = MsgBox("Neptun column detected: " & detectedColumn & vbCrLf & _
-                               "Range: " & detectedColumn & "2:" & detectedColumn & lastRow & vbCrLf & vbCrLf & _
-                               "Use this range?", vbYesNo + vbQuestion, "Auto-Detected Range")
+            useDetected = MsgBox("Neptun oszlop észlelve: " & detectedColumn & vbCrLf & _
+                               "Tartomány: " & detectedColumn & "2:" & detectedColumn & lastRow & vbCrLf & vbCrLf & _
+                               "Használja ezt a tartományt?", vbYesNo + vbQuestion, "Automatikusan észlelt tartomány")
             
             If useDetected = vbYes Then
                 Set selectedRange = ws.Range(detectedColumn & "2:" & detectedColumn & lastRow)
@@ -63,14 +62,14 @@ Sub AnonymizeNeptunCodes()
     ' If still no range, prompt user to select manually
     If selectedRange Is Nothing Then
         On Error Resume Next
-        Set selectedRange = Application.InputBox("Select the range containing Neptun codes:", _
-                                                "Select Range", _
+        Set selectedRange = Application.InputBox("Válassza ki a Neptun kódokat tartalmazó tartományt:", _
+                                                "Tartomány kijelölése", _
                                                 Type:=8)
         On Error GoTo 0
         
         ' Check if user cancelled selection
         If selectedRange Is Nothing Then
-            MsgBox "No range selected. Operation cancelled.", vbInformation, "Cancelled"
+            MsgBox "Nincs kijelölt tartomány. Művelet megszakítva.", vbInformation, "Megszakítva"
             Exit Sub
         End If
     End If
@@ -103,9 +102,9 @@ Sub AnonymizeNeptunCodes()
     Application.ScreenUpdating = True
     
     ' Show completion message
-    MsgBox "Anonymization complete!" & vbCrLf & _
-           "Processed " & processedCount & " codes.", _
-           vbInformation, "Complete"
+    MsgBox "Anonimizálás kész!" & vbCrLf & _
+           "Feldolgozott kódok száma: " & processedCount, _
+           vbInformation, "Kész"
 End Sub
 
 ' Function to generate anonymized code using SHA-1 hash
@@ -232,7 +231,7 @@ Private Function DetectNeptunColumn(ByVal ws As Worksheet) As String
 End Function
 
 ' Subroutine to anonymize entire column (alternative method)
-Sub AnonymizeColumn()
+Sub OszlopAnonimizalas()
     Dim saltValue As String
     Dim ws As Worksheet
     Dim lastRow As Long
@@ -244,13 +243,13 @@ Sub AnonymizeColumn()
     Set ws = ActiveSheet
     
     ' Prompt user for salt value
-    saltValue = InputBox("Enter salt value for anonymization:" & vbCrLf & _
-                        "(Use the same salt for all worksheets to maintain compatibility)", _
-                        "Neptun Code Anonymization")
+    saltValue = InputBox("Adja meg a só értéket az anonimizáláshoz:" & vbCrLf & _
+                        "(Használja ugyanazt a só értéket minden munkalaphoz a kompatibilitás megőrzéséhez)", _
+                        "Neptun Kód Anonimizálás")
     
     ' Check if user cancelled or entered empty salt
     If saltValue = "" Then
-        MsgBox "Anonymization cancelled. Salt value is required.", vbExclamation, "Cancelled"
+        MsgBox "Anonimizálás megszakítva. Só érték megadása kötelező.", vbExclamation, "Megszakítva"
         Exit Sub
     End If
     
@@ -259,17 +258,17 @@ Sub AnonymizeColumn()
     
     ' Prompt for column letter with auto-detected suggestion
     If detectedColumn <> "" Then
-        columnLetter = InputBox("Neptun column detected: " & detectedColumn & vbCrLf & vbCrLf & _
-                               "Enter the column letter containing Neptun codes" & vbCrLf & _
-                               "(or press OK to use detected column):", _
-                               "Column Selection", detectedColumn)
+        columnLetter = InputBox("Neptun oszlop észlelve: " & detectedColumn & vbCrLf & vbCrLf & _
+                               "Adja meg a Neptun kódokat tartalmazó oszlop betűjelét" & vbCrLf & _
+                               "(vagy nyomja meg az OK gombot az észlelt oszlop használatához):", _
+                               "Oszlop kiválasztása", detectedColumn)
     Else
-        columnLetter = InputBox("Enter the column letter containing Neptun codes (e.g., A, B, C):", _
-                               "Column Selection")
+        columnLetter = InputBox("Adja meg a Neptun kódokat tartalmazó oszlop betűjelét (pl. A, B, C):", _
+                               "Oszlop kiválasztása")
     End If
     
     If columnLetter = "" Then
-        MsgBox "No column specified. Operation cancelled.", vbInformation, "Cancelled"
+        MsgBox "Nincs megadott oszlop. Művelet megszakítva.", vbInformation, "Megszakítva"
         Exit Sub
     End If
     
@@ -278,17 +277,17 @@ Sub AnonymizeColumn()
     
     ' Check if column has data
     If lastRow < 2 Then
-        MsgBox "No data found in column " & columnLetter, vbExclamation, "No Data"
+        MsgBox "Nincs adat a(z) " & columnLetter & " oszlopban", vbExclamation, "Nincs adat"
         Exit Sub
     End If
     
     ' Set target range (excluding header if starting from row 2)
     Dim startRow As Long
-    startRow = Application.InputBox("Enter starting row number (typically 2 to skip header):", _
-                                   "Start Row", 2, Type:=1)
+    startRow = Application.InputBox("Adja meg a kezdő sor számát (általában 2, ha van fejléc):", _
+                                   "Kezdő sor", 2, Type:=1)
     
     If startRow < 1 Or startRow > lastRow Then
-        MsgBox "Invalid start row.", vbExclamation, "Error"
+        MsgBox "Érvénytelen kezdő sor.", vbExclamation, "Hiba"
         Exit Sub
     End If
     
@@ -320,9 +319,9 @@ Sub AnonymizeColumn()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     
-    MsgBox "Anonymization complete!" & vbCrLf & _
-           "Processed " & processedCount & " codes in column " & columnLetter, _
-           vbInformation, "Complete"
+    MsgBox "Anonimizálás kész!" & vbCrLf & _
+           "Feldolgozott kódok száma a(z) " & columnLetter & " oszlopban: " & processedCount, _
+           vbInformation, "Kész"
 End Sub
 
 

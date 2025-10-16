@@ -1,7 +1,7 @@
 """
-Excel Macro Injector for Neptun Anonymizer
-Scans a directory for Excel files and adds the NeptunAnonymizer macro to each file.
-Saves the files as .xlsm (macro-enabled) format in an output directory.
+Excel Makró Injektáló - Neptun Anonimizáló
+Végigpásztázza a könyvtárat Excel fájlok után és hozzáadja a NeptunAnonymizer makrót minden fájlhoz.
+Elmenti a fájlokat .xlsm (makró-kompatibilis) formátumban egy kimeneti könyvtárba.
 """
 
 import os
@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import filedialog
 
 def select_folder(title, initial_dir=None):
-    """Show folder picker dialog"""
+    """Mappa kiválasztó ablak megjelenítése"""
     root = tk.Tk()
     root.withdraw()  # Hide the main window
     root.attributes('-topmost', True)  # Bring dialog to front
@@ -29,13 +29,13 @@ def select_folder(title, initial_dir=None):
     return folder_path
 
 def select_file(title, initial_dir=None, filetypes=None):
-    """Show file picker dialog"""
+    """Fájl kiválasztó ablak megjelenítése"""
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
     
     if filetypes is None:
-        filetypes = [("VBA Files", "*.bas"), ("All Files", "*.*")]
+        filetypes = [("VBA Fájlok", "*.bas"), ("Minden fájl", "*.*")]
     
     file_path = filedialog.askopenfilename(
         title=title,
@@ -47,7 +47,7 @@ def select_file(title, initial_dir=None, filetypes=None):
     return file_path
 
 def read_vba_code(vba_file_path):
-    """Read VBA code from .bas file"""
+    """VBA kód beolvasása .bas fájlból"""
     try:
         with open(vba_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -58,17 +58,20 @@ def read_vba_code(vba_file_path):
     
     # Remove VBA export attributes (Attribute lines)
     # These cause syntax errors when added via AddFromString
+    # VBA export attribútumok eltávolítása (Attribute sorok)
+    # Ezek szintaxis hibát okoznak az AddFromString használatakor
     lines = content.split('\n')
     cleaned_lines = []
     for line in lines:
         # Skip lines starting with "Attribute" (case-insensitive)
+        # Az "Attribute"-tal kezdődő sorok kihagyása
         if not line.strip().upper().startswith('ATTRIBUTE '):
             cleaned_lines.append(line)
     
     return '\n'.join(cleaned_lines)
 
 def add_macro_to_workbook(excel_app, workbook_path, vba_code, output_path):
-    """Add VBA macro to an Excel workbook"""
+    """VBA makró hozzáadása Excel munkafüzethez"""
     try:
         # Open workbook
         wb = excel_app.Workbooks.Open(workbook_path)
@@ -82,7 +85,7 @@ def add_macro_to_workbook(excel_app, workbook_path, vba_code, output_path):
         
         for component in vb_project.VBComponents:
             if component.Name == module_name:
-                print(f"  - Module '{module_name}' already exists, removing old version...")
+                print(f"  - A(z) '{module_name}' modul már létezik, régi verzió eltávolítása...")
                 vb_project.VBComponents.Remove(component)
                 break
         
@@ -99,7 +102,20 @@ def add_macro_to_workbook(excel_app, workbook_path, vba_code, output_path):
         
         return True
     except Exception as e:
-        print(f"  ERROR: {str(e)}")
+        err = str(e)
+        # Detect known VBA project access error and print Hungarian instructions
+        if ("Nincs jogosultság" in err) or ("not trusted" in err):
+            print("\nFIGYELEM: A makró hozzáadása sikertelen, mert nincs programozási hozzáférés a VBA projekthez.")
+            print("Engedélyezze az Excel beállításaiban a hozzáférést a következőképpen:")
+            print("  1) Nyissa meg az Excel-t.")
+            print("  2) Fájl -> Beállítások (File -> Options).")
+            print("  3) Adatvédelmi központ -> Az Adatvédelmi központ beállításai... (Trust Center -> Trust Center Settings...).")
+            print("  4) Makróbeállítások (Macro Settings) fülön jelölje be: ")
+            print("      'A VBA-projekt objektummodelljéhez való hozzáférés megbízható' (Trust access to the VBA project object model).")
+            print("  5) OK, majd zárja be az Excel-t.")
+            print("Ezután futtassa újra a szkriptet.\n")
+        else:
+            print(f"  HIBA: {err}")
         try:
             wb.Close(SaveChanges=False)
         except:
@@ -107,28 +123,41 @@ def add_macro_to_workbook(excel_app, workbook_path, vba_code, output_path):
         return False
 
 def process_directory(input_dir, output_dir, vba_file_path):
-    """Process all Excel files in the input directory"""
+    """Minden Excel fájl feldolgozása a bemeneti könyvtárban"""
     
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
     # Read VBA code
-    print(f"Reading VBA code from: {vba_file_path}")
+    print(f"VBA kód beolvasása: {vba_file_path}")
     vba_code = read_vba_code(vba_file_path)
-    print(f"VBA code loaded successfully ({len(vba_code)} characters)\n")
+    print(f"VBA kód sikeresen betöltve ({len(vba_code)} karakter)\n")
     
-    # Initialize Excel application
-    print("Initializing Excel application...")
-    excel_app = win32com.client.Dispatch("Excel.Application")
-    excel_app.Visible = False
+    # Try to connect to existing Excel instance
+    excel_app = None
+    excel_was_running = False
+    try:
+        excel_app = win32com.client.GetActiveObject("Excel.Application")
+        excel_was_running = True
+        print("Csatlakozás a meglévő Excel példányhoz...")
+    except:
+        # No existing instance, create new one
+        excel_app = win32com.client.Dispatch("Excel.Application")
+        excel_app.Visible = False
+        print("Excel indítása...")
+    
+    # If we started Excel, hide it and disable alerts
+    if not excel_was_running:
+        excel_app.Visible = False
+    
     excel_app.DisplayAlerts = False
     
     # Enable VBA project access (must be enabled in Excel Trust Center)
     try:
         excel_app.VBE.MainWindow.Visible = False
     except:
-        print("WARNING: VBA project access might be restricted.")
-        print("Please enable 'Trust access to the VBA project object model' in Excel Trust Center.\n")
+        print("FIGYELMEZTETÉS: A VBA projekt hozzáférés korlátozva lehet.")
+        print("Kérjük, engedélyezze a 'A VBA-projekt objektummodelljéhez való hozzáférés megbízható' opciót az Excel Adatvédelmi központjában.\n")
     
     # Supported Excel extensions
     excel_extensions = ['.xlsx', '.xls', '.xlsm', '.xlsb']
@@ -155,11 +184,11 @@ def process_directory(input_dir, output_dir, vba_file_path):
                     excel_files.append(file)
     
     if not excel_files:
-        print(f"No Excel files found in: {input_dir}")
+        print(f"Nem található Excel fájl itt: {input_dir}")
         excel_app.Quit()
         return
     
-    print(f"Found {len(excel_files)} Excel file(s) to process:\n")
+    print(f"{len(excel_files)} Excel fájl található feldolgozásra:\n")
     
     # Process each file
     success_count = 0
@@ -172,29 +201,33 @@ def process_directory(input_dir, output_dir, vba_file_path):
         # Create subdirectories in output if needed
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        print(f"Processing: {rel_path}")
-        print(f"  Output: {output_file.name}")
+        print(f"Feldolgozás: {rel_path}")
+        print(f"  Kimenet: {output_file.name}")
         
         if add_macro_to_workbook(excel_app, str(excel_file.absolute()), vba_code, str(output_file.absolute())):
-            print(f"  ✓ SUCCESS\n")
+            print(f"  ✓ SIKERES\n")
             success_count += 1
         else:
-            print(f"  ✗ FAILED\n")
+            print(f"  ✗ SIKERTELEN\n")
             failed_count += 1
     
     # Cleanup
-    excel_app.Quit()
+    # Only quit Excel if we started it
+    if not excel_was_running:
+        excel_app.Quit()
+    else:
+        excel_app.DisplayAlerts = True
     
     # Summary
     print("=" * 60)
-    print(f"Processing complete!")
-    print(f"  Successful: {success_count}")
-    print(f"  Failed: {failed_count}")
-    print(f"  Output directory: {output_dir}")
+    print(f"Feldolgozás befejezve!")
+    print(f"  Sikeres: {success_count}")
+    print(f"  Sikertelen: {failed_count}")
+    print(f"  Kimeneti könyvtár: {output_dir}")
     print("=" * 60)
 
 def main():
-    """Main entry point"""
+    """Fő belépési pont"""
     
     # Get script directory
     script_dir = Path(__file__).parent
@@ -204,34 +237,34 @@ def main():
     
     # Setup argument parser
     parser = argparse.ArgumentParser(
-        description='Excel Macro Injector - Adds Neptun Anonymizer macro to Excel files',
+        description='Excel Makró Injektáló - Hozzáad egy makrót Excel fájlokhoz',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=''':
-Examples:
-  %(prog)s . output                                      # Process current directory
-  %(prog)s . output NeptunAnonymizer.bas                 # Specify VBA file
-  %(prog)s input output                                  # Process 'input' folder
-  %(prog)s                                                # Use GUI folder pickers
+Példák:
+  %(prog)s . output                                      # Aktuális könyvtár feldolgozása
+  %(prog)s . output NeptunAnonymizer.bas                 # VBA fájl megadása
+  %(prog)s input output                                  # 'input' mappa feldolgozása
+  %(prog)s                                               # GUI mappakiválasztó használata
         '''
     )
     
     parser.add_argument(
         'input_dir',
         nargs='?',
-        help='Input directory containing Excel files (.xlsx, .xls, .xlsm, .xlsb)'
+        help='Bemeneti könyvtár Excel fájlokkal (.xlsx, .xls, .xlsm, .xlsb)'
     )
     
     parser.add_argument(
         'output_dir',
         nargs='?',
-        help='Output directory for processed .xlsm files'
+        help='Kimeneti könyvtár a feldolgozott .xlsm fájloknak'
     )
     
     parser.add_argument(
         'vba_file',
         nargs='?',
         default=str(default_vba) if default_vba.exists() else None,
-        help=f'Path to VBA macro file (.bas) (default: {default_vba.name})'
+        help=f'VBA makró fájl elérési útja (.bas) (alapértelmezett: {default_vba.name})'
     )
     
     parser.add_argument(
@@ -246,57 +279,57 @@ Examples:
     if args.input_dir:
         input_dir = args.input_dir
     else:
-        print("Select input directory containing Excel files...")
+        print("Válassza ki az Excel fájlokat tartalmazó bemeneti könyvtárat...")
         input_dir = select_folder(
-            "Select Input Directory (Excel files)",
+            "Válasszon Bemeneti Könyvtárat (Excel fájlok)",
             initial_dir=str(script_dir)
         )
         if not input_dir:
-            print("ERROR: No input directory selected. Exiting.")
+            print("HIBA: Nincs kiválasztva bemeneti könyvtár. Kilépés.")
             return
     
     # Get output directory from args or folder picker
     if args.output_dir:
         output_dir = args.output_dir
     else:
-        print("Select output directory for processed files...")
+        print("Válassza ki a feldolgozott fájlok kimeneti könyvtárát...")
         output_dir = select_folder(
-            "Select Output Directory (for .xlsm files)",
+            "Válasszon Kimeneti Könyvtárat (.xlsm fájlokhoz)",
             initial_dir=str(script_dir)
         )
         if not output_dir:
-            print("ERROR: No output directory selected. Exiting.")
+            print("HIBA: Nincs kiválasztva kimeneti könyvtár. Kilépés.")
             return
     
     # Get VBA file from args or file picker
     if args.vba_file:
         vba_file = args.vba_file
     else:
-        print("Select VBA macro file...")
+        print("Válassza ki a VBA makró fájlt...")
         vba_file = select_file(
-            "Select VBA Macro File (.bas)",
+            "Válasszon VBA Makró Fájlt (.bas)",
             initial_dir=str(script_dir),
-            filetypes=[("VBA Files", "*.bas"), ("All Files", "*.*")]
+            filetypes=[("VBA Fájlok", "*.bas"), ("Minden fájl", "*.*")]
         )
         if not vba_file:
-            print("ERROR: No VBA file selected. Exiting.")
+            print("HIBA: Nincs kiválasztva VBA fájl. Kilépés.")
             return
     
     # Validate paths
     if not os.path.exists(input_dir):
-        print(f"ERROR: Input directory not found: {input_dir}")
+        print(f"HIBA: Bemeneti könyvtár nem található: {input_dir}")
         return
     
     if not os.path.exists(vba_file):
-        print(f"ERROR: VBA file not found: {vba_file}")
+        print(f"HIBA: VBA fájl nem található: {vba_file}")
         return
     
     print("\n" + "=" * 60)
-    print("Excel Macro Injector - Neptun Anonymizer")
+    print("Excel Makró Injektáló")
     print("=" * 60)
-    print(f"Input directory:  {input_dir}")
-    print(f"Output directory: {output_dir}")
-    print(f"VBA macro file:   {vba_file}")
+    print(f"Bemeneti könyvtár:  {input_dir}")
+    print(f"Kimeneti könyvtár:  {output_dir}")
+    print(f"VBA makró fájl:     {vba_file}")
     print("=" * 60 + "\n")
     
     # Process files
