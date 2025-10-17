@@ -9,6 +9,7 @@ from github import Github, GithubException
 from github.Commit import Commit
 from github.Repository import Repository
 from github.Issue import Issue
+from core.logger import log
 
 
 class DocstringStripper(ast.NodeTransformer):
@@ -97,10 +98,9 @@ class BugFixFilter:
 class IssueLinker:
     """Handles linking commits to GitHub issues/PRs."""
 
-    def __init__(self, repo: Repository, bug_filter: BugFixFilter, log_callback):
+    def __init__(self, repo: Repository, bug_filter: BugFixFilter):
         self.repo = repo
         self.filter = bug_filter  # already have it, why not use it
-        self.log = log_callback
 
     def extract_issue_data(self, commit_message: str) -> Optional[dict[str, str]]:
         """
@@ -125,7 +125,7 @@ class IssueLinker:
                 return self._process_issue(issue)
 
         except GithubException:
-            self.log(
+            log(
                 f"    --> Could not fetch reference #{issue_number}. "
                 f"It may be private or deleted. Skipping."
             )
@@ -138,7 +138,7 @@ class IssueLinker:
 
     def _create_issue_data(self, title: str, body: str, source: str) -> Dict[str, str]:
         """Create a standardized issue data dict."""
-        self.log(f"    --> Successfully fetched {source}: {title}")
+        log(f"    --> Successfully fetched {source}: {title}")
         return {
             "issue_title": title,
             "issue_body": body or "No description provided.",
@@ -146,10 +146,10 @@ class IssueLinker:
 
     def _process_issue(self, issue: Issue) -> Dict[str, str]:
         """Process a direct issue reference."""
-        self.log(f"    --> Found Issue #{issue.number}: {issue.title}")
+        log(f"    --> Found Issue #{issue.number}: {issue.title}")
 
         if self.filter.has_bug_label(issue):
-            self.log(f"    --> Issue has bug label - confirmed bug!")
+            log(f"    --> Issue has bug label - confirmed bug!")
 
         return self._create_issue_data(
             issue.title, issue.body or "", f"Issue #{issue.number}"
@@ -157,7 +157,7 @@ class IssueLinker:
 
     def _process_pull_request(self, pr: Issue) -> Optional[dict[str, str]]:
         """Process a pull request to extract issue data."""
-        self.log(f"    --> Found PR #{pr.number}: {pr.title}")
+        log(f"    --> Found PR #{pr.number}: {pr.title}")
 
         pr_body = pr.body or ""
 
@@ -168,19 +168,19 @@ class IssueLinker:
 
         # step 2: check for bug label - can a PR even have that? TODO
         if self.filter.has_bug_label(pr):
-            self.log(f"    --> PR has bug label/type - confirmed bug!")
+            log(f"    --> PR has bug label/type - confirmed bug!")
             return self._create_issue_data(pr.title, pr_body, "PR description")
 
         # step 3: heuristic check
         if self.filter.is_likely_bug_fix(pr.title, pr_body):
-            self.log(
+            log(
                 f"    --> PR #{pr.number} has no linked issue or bug label, "
                 f"but appears to be a bug fix (heuristic)."
             )
             return self._create_issue_data(pr.title, pr_body, "PR description")
 
         # step 4: not a bug fix
-        self.log(
+        log(
             f"    --> PR #{pr.number} does not link to an issue and "
             f"doesn't appear to be a bug fix. Skipping."
         )
@@ -196,42 +196,37 @@ class IssueLinker:
             return None
 
         linked_number = int(match.group(2))
-        self.log(
-            f"    --> Found linked Issue #{linked_number} in PR body. Fetching it."
-        )
+        log(f"    --> Found linked Issue #{linked_number} in PR body. Fetching it.")
 
         try:
             linked_issue = self.repo.get_issue(number=linked_number)
 
             if linked_issue.pull_request:
-                self.log(
+                log(
                     f"    --> WARNING: Linked #{linked_number} is also a PR, "
                     f"not an issue."
                 )
                 return None
 
             if self.filter.has_bug_label(linked_issue):
-                self.log(f"    --> Linked issue has bug label/type - confirmed bug!")
+                log(f"    --> Linked issue has bug label/type - confirmed bug!")
 
             return self._create_issue_data(
                 linked_issue.title, linked_issue.body or "", f"Issue #{linked_number}"
             )
 
         except GithubException:
-            self.log(f"    --> WARNING: Could not fetch linked Issue #{linked_number}.")
+            log(f"    --> WARNING: Could not fetch linked Issue #{linked_number}.")
             return None
 
 
 class CommitAnalyzer:
     """Analyzes commits to determine if they contain functional bug fixes."""
 
-    def __init__(self, repo: Repository, bug_filter: BugFixFilter, log_callback):
+    def __init__(self, repo: Repository, bug_filter: BugFixFilter):
 
         self.repo = repo
-        self.log = log_callback
-        self.issue_linker = IssueLinker(
-            repo, bug_filter, log_callback
-        )  # class only used by CommitAnalyzer
+        self.issue_linker = IssueLinker(repo, bug_filter)
 
     def is_functional_change(self, parent_sha, commit_sha, file_path) -> bool:
         """Checks if a commit introduced a functional code change."""
@@ -305,7 +300,7 @@ class CommitAnalyzer:
         )
 
         if not has_functional_change:
-            self.log(
+            log(
                 f"  Skipping commit {commit.sha[:7]}: Changes are only in comments/docstrings."
             )
             return None
@@ -333,9 +328,8 @@ class CorpusBuilder:
     All filter keywords must be defined in config.json.
     """
 
-    def __init__(self, log_callback: Callable[[str], None]):
+    def __init__(self):
 
-        self.log = log_callback
         self.config: Optional[Dict[str, Any]] = None
         self.github_client: Optional[Github] = None
 
@@ -352,7 +346,7 @@ class CorpusBuilder:
         load_dotenv(dotenv_path=env_path)
         token = os.getenv("GITHUB_TOKEN")
         if not token:
-            self.log(f"ERROR: GITHUB_TOKEN not found in {env_path}")
+            log(f"ERROR: GITHUB_TOKEN not found in {env_path}")
             return False
 
         # load config file
@@ -379,20 +373,20 @@ class CorpusBuilder:
             return True
 
         except FileNotFoundError:
-            self.log(f"ERROR: config.json not found at {config_path}")
+            log(f"ERROR: config.json not found at {config_path}")
             return False
         except KeyError as e:
-            self.log(f"ERROR: {e}")
+            log(f"ERROR: {e}")
             return False
         except json.JSONDecodeError as e:
-            self.log(f"ERROR: Invalid JSON in config.json - {e}")
+            log(f"ERROR: Invalid JSON in config.json - {e}")
             return False
 
     def _process_repository(self, repo_name: str) -> list[Dict[str, Any]]:
         """
         Process a single repository to find bug fixes.
         """
-        self.log(f"Processing repository: {repo_name}")
+        log(f"Processing repository: {repo_name}")
 
         # Assert preconditions
         # TODO: can I make these assumptions?
@@ -406,7 +400,7 @@ class CorpusBuilder:
 
             # create filter and analyzer for this repository
             bug_filter = BugFixFilter(self.config)
-            analyzer = CommitAnalyzer(repo, bug_filter, self.log)
+            analyzer = CommitAnalyzer(repo, bug_filter)
 
             # process commits up to defined search depth
             commits = repo.get_commits()[: self.config["commit_search_depth"]]
@@ -421,20 +415,20 @@ class CorpusBuilder:
 
                 if bug_data:
                     bugs.append(bug_data)
-                    self.log(
+                    log(
                         f"  Found FUNCTIONAL fix ({len(bugs)}/{self.config['max_commits_per_repo']}): "
                         f"{bug_data['bug_commit_sha'][:7]} - {bug_data['commit_message']}"
                     )
 
                 if len(bugs) >= self.config["max_commits_per_repo"]:
-                    self.log(
+                    log(
                         f"  Reached limit of {self.config['max_commits_per_repo']} "
                         f"for {repo_name}."
                     )
                     break
 
         except GithubException as e:
-            self.log(f"ERROR processing {repo_name}: {e}")
+            log(f"ERROR processing {repo_name}: {e}")
 
         return bugs
 
@@ -475,14 +469,12 @@ class CorpusBuilder:
         # step 4
         self._save_corpus(bug_corpus)
 
-        self.log(
-            f"Corpus build complete. Found {len(bug_corpus)} actionable bug fixes."
-        )
+        log(f"Corpus build complete. Found {len(bug_corpus)} actionable bug fixes.")
 
 
-def build(log_callback: Callable[[str], None]):
+def build():
     """
     Build bug fix corpus from configured repositories.
     """
-    builder = CorpusBuilder(log_callback)
+    builder = CorpusBuilder()
     builder.build()

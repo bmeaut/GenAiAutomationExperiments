@@ -2,12 +2,11 @@ import os
 import lizard
 import complexipy
 from typing import Callable, Dict, Any
+from core.logger import log
 
 
 # using type hints because Pylance complained (probably for a reason)
-def analyze_files(
-    repo_path: str, filenames: list[str], log_callback: Callable[[str], None]
-) -> dict[str, Any]:
+def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
     """
     Analyzes a list of Python files for a suite of code quality metrics.
     """
@@ -49,7 +48,7 @@ def analyze_files(
             function_count += file_func_count
 
         except Exception as e:
-            log_callback(f"    Warning: Could not analyze {filename}. Reason: {e}")
+            log(f"    Warning: Could not analyze {filename}. Reason: {e}")
 
     avg_params = total_params / function_count if function_count > 0 else 0
 

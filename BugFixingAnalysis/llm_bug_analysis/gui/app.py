@@ -2,7 +2,8 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 import json
 import threading
-from core import corpus_builder, pipeline
+from core import corpus_builder, pipeline, logger
+from core.logger import log
 
 
 class ANSIColor:
@@ -19,19 +20,12 @@ class ANSIColor:
 
 
 class BugAnalysisGUI(tk.Frame):
-    """
-    Main GUI application for the LLM Bug Analysis Framework.
-
-    Provides interface for:
-    - Managing target repositories
-    - Building bug corpus from GitHub commits
-    - Running AI-assisted bug fix analysis
-    - Comparing AI vs human bug fixes
-    """
+    """Main GUI application for the LLM Bug Analysis Framework."""
 
     def __init__(self, master=None):
 
         super().__init__(master)
+        logger.set_callback(self._log_message)
 
         # analysis options
         self.dry_run_enabled = tk.BooleanVar(value=False)
@@ -251,9 +245,7 @@ class BugAnalysisGUI(tk.Frame):
             self._set_status("Paused...")
             self.pause_button.config(state=tk.DISABLED)
             self.resume_button.config(state=tk.NORMAL)
-            self._log_message(
-                ">>> Pipeline paused by user. Click 'Resume' to continue."
-            )
+            log(">>> Pipeline paused by user. Click 'Resume' to continue.")
 
     def _resume_analysis_pipeline(self):
         """Sets the resume event, allowing the pipeline to continue."""
@@ -262,7 +254,7 @@ class BugAnalysisGUI(tk.Frame):
             self._set_status("Busy: Resuming analysis...")
             self.pause_button.config(state=tk.NORMAL)
             self.resume_button.config(state=tk.DISABLED)
-            self._log_message(">>> Pipeline resumed by user.")
+            log(">>> Pipeline resumed by user.")
 
     def _stop_analysis_pipeline(self):
         """Sets the stop event, signaling the pipeline to terminate gracefully."""
@@ -271,9 +263,7 @@ class BugAnalysisGUI(tk.Frame):
         self.pipeline_resume_event.set()
         self.pipeline_stop_event.set()
         self._toggle_analysis_controls(False)  # disable buttons
-        self._log_message(
-            ">>> Stop signal sent. The pipeline will halt after the current task."
-        )
+        log(">>> Stop signal sent. The pipeline will halt after the current task.")
 
     def _toggle_analysis_controls(self, is_running: bool):
         """Helper to enable/disable all relevant buttons when a task starts/stops."""
@@ -331,9 +321,9 @@ class BugAnalysisGUI(tk.Frame):
                 self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
 
         except FileNotFoundError:
-            self._log_message("config.json not found. Using defaults.")
+            log("config.json not found. Using defaults.")
         except json.JSONDecodeError:
-            self._log_message("ERROR: Could not parse config.json.")
+            log("ERROR: Could not parse config.json.")
 
     def _save_configuration(self):
         repos = list(self.repository_listbox.get(0, tk.END))
@@ -409,7 +399,7 @@ class BugAnalysisGUI(tk.Frame):
         self._save_configuration()
 
         def build_task():
-            corpus_builder.build(self._log_message)
+            corpus_builder.build()
             self._load_bug_corpus()
             self._set_status("Idle")
 
@@ -428,11 +418,11 @@ class BugAnalysisGUI(tk.Frame):
                 display_text = f"{index+1:03d}: {bug_data['repo_name']} - {bug_data['commit_message']}"
                 self.corpus_listbox.insert(tk.END, display_text)
 
-            self._log_message(
+            log(
                 f"Successfully loaded {len(self.bug_corpus)} bugs into the corpus viewer."
             )
         except (FileNotFoundError, json.JSONDecodeError):
-            self._log_message("Could not load corpus.json. Please build the corpus.")
+            log("Could not load corpus.json. Please build the corpus.")
 
     def _run_selected_bug_analysis(self):
         """Run analysis pipeline for a single selected bug from corpus."""
@@ -458,15 +448,13 @@ class BugAnalysisGUI(tk.Frame):
         try:
             with open("corpus.json") as corpus_file:
                 if not json.load(corpus_file):
-                    self._log_message(
-                        "ERROR: corpus.json is empty. Please build the corpus first."
-                    )
+                    log("ERROR: corpus.json is empty. Please build the corpus first.")
                     messagebox.showerror(
                         "Error", "Corpus is empty. Please build the corpus first."
                     )
                     return
         except (FileNotFoundError, json.JSONDecodeError):
-            self._log_message(
+            log(
                 "ERROR: corpus.json not found or invalid. Please build the corpus first."
             )
             messagebox.showerror(
@@ -508,7 +496,6 @@ class BugAnalysisGUI(tk.Frame):
             self._toggle_analysis_controls(is_running=True)
             try:
                 pipeline.run(
-                    self._log_message,
                     skip_llm_fix=is_dry_run,
                     single_bug_data=single_bug,
                     resume_event=self.pipeline_resume_event,
@@ -521,7 +508,7 @@ class BugAnalysisGUI(tk.Frame):
                 self._toggle_analysis_controls(is_running=False)
                 self._set_status("Idle")
                 if not self.pipeline_stop_event.is_set():
-                    self._log_message(completion_message)
+                    log(completion_message)
 
         threading.Thread(target=analysis_task, daemon=True).start()
 
