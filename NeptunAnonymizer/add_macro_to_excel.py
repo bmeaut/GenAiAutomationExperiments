@@ -5,12 +5,9 @@ Elmenti a fájlokat .xlsm (makró-kompatibilis) formátumban egy kimeneti könyv
 """
 
 import os
-import sys
-import shutil
 import argparse
 from pathlib import Path
 import win32com.client
-from win32com.client import constants
 import tkinter as tk
 from tkinter import filedialog
 
