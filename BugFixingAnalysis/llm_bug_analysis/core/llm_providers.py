@@ -1,53 +1,57 @@
 import os
+from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Any
 from dotenv import load_dotenv
 
 
 class LLMProvider(ABC):
-    """Abstract base class for LLM providers."""
 
     @abstractmethod
-    def generate_fix(self, prompt: str) -> Dict[str, Any]:
-        """Generate a fix given a prompt. Returns dict with response text and metadata."""
+    def generate_fix(self, prompt: str) -> dict[str, Any]:
+        """Generate a fix from prompt."""
         pass
 
 
 class GeminiProvider(LLMProvider):
-    """Google Gemini 2.5 provider."""
+    """Google Gemini API provider."""
 
-    def __init__(self, model: str = "gemini-2.5-pro", api_key: Optional[str] = None):
+    SUPPORTED_MODELS = {
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    }
+
+    def __init__(self, model: str = "gemini-2.5-pro"):
+
+        if model not in self.SUPPORTED_MODELS:
+            models = ", ".join(f"'{m}'" for m in sorted(self.SUPPORTED_MODELS))
+            raise ValueError(f"Unknown model '{model}'. Supported: {models}")
 
         # lazy import - only load when Gemini is actually used
         from google import genai
 
         self.model = model
 
-        if api_key is None:
-            api_key = self._load_api_key_from_env()
+        api_key = self._load_key()
 
         if not api_key:
             raise ValueError(
                 f"Gemini API key not found! Set GOOGLE_API_KEY in .env file "
-                "or pass api_key parameter."
             )
 
         self.client = genai.Client(api_key=api_key)
 
-    def _load_api_key_from_env(self) -> Optional[str]:
-        """Load API key from .env file in project root."""
-        script_path = os.path.abspath(__file__)
-        project_root = os.path.dirname(os.path.dirname(script_path))
-        env_path = os.path.join(project_root, ".env")
+    def _load_key(self) -> str | None:
+        """Load API key from .env in project root."""
+        project_root = Path(__file__).parent.parent
+        env_path = project_root / ".env"
 
         load_dotenv(dotenv_path=env_path)
         return os.getenv("GOOGLE_API_KEY")
 
-    def generate_fix(self, prompt: str) -> Dict[str, Any]:
-        """
-        Generate a bug fix using Gemini API.
-        """
-        # lazy import
+    def generate_fix(self, prompt: str) -> dict[str, Any]:
+        """Call Gemini API to generate fix."""
         from google.genai import types
 
         try:
@@ -61,40 +65,23 @@ class GeminiProvider(LLMProvider):
                 ),
             )
 
-            self._validate_response(response)
-
-            usage_metadata = self._extract_usage_metadata(response)
+            if not response or not hasattr(response, "text"):
+                raise ValueError(f"Bad response structure: {type(response)}")
 
             if response.text is None:
-                self._raise_empty_response_error(response)
+                self._handle_empty_response(response)
 
             return {
                 "text": response.text,
-                "metadata": usage_metadata,
+                "metadata": self._get_usage(response),
             }
 
         except Exception as e:
-            raise ValueError(
-                f"Gemini API call failed: {type(e).__name__}: {str(e)}"
-            ) from e
+            raise ValueError(f"Gemini API failed: {e}") from e
 
-    def _validate_response(self, response) -> None:
-        """
-        Validate that the API response has expected structure.
-        """
-        if response is None:
-            raise ValueError("Gemini API returned None response object")
-
-        if not hasattr(response, "text"):
-            raise ValueError(
-                f"Gemini response missing 'text' attribute. "
-                f"Response type: {type(response)}"
-            )
-
-    def _extract_usage_metadata(self, response) -> Dict[str, Any]:
-        """
-        Extract token usage and completion metadata from response.
-        """
+    def _get_usage(self, response) -> dict[str, Any]:
+        """Get token usage and finish reason from response."""
+        # TODO: maybe add elapsed time?
         usage = getattr(response, "usage_metadata", None)
 
         finish_reason = "UNKNOWN"
@@ -115,44 +102,35 @@ class GeminiProvider(LLMProvider):
             "finish_reason": finish_reason,
         }
 
-    def _raise_empty_response_error(self, response) -> None:
-        """
-        Raise detailed error when response.text is None.
-        """
+    def _handle_empty_response(self, response) -> None:
+
         finish_reason = getattr(response, "finish_reason", "UNKNOWN")
         safety_ratings = getattr(response, "safety_ratings", None)
-        candidates = getattr(response, "candidates", None)
         usage = getattr(response, "usage_metadata", None)
 
         error_details = [
             f"finish_reason: {finish_reason}",
             f"safety_ratings: {safety_ratings}",
             f"usage_metadata: {usage}",
-            f"candidates: {candidates}",
         ]
 
         raise ValueError(
-            "Gemini API returned None text. This usually means:\n"
-            "  - Response was blocked by safety filters\n"
-            "  - Token limit was exceeded (check max_output_tokens)\n"
-            "  - Model encountered an error during generation\n\n"
-            "Details:\n" + "\n".join(error_details)
+            "Gemini API returned empty response. Possibly means:\n"
+            "  - Safety filters blocked it\n"
+            "  - Hit token limit (check max_output_tokens)\n"
+            "  - Internal model error\n\n"
+            f"{chr(10).join(error_details)}"
         )
 
 
-def get_llm_provider(model: str = "gemini-2.5-pro") -> LLMProvider:
-    """
-    Get LLM provider instance.
-    """
-    available_models = {
-        "gemini-2.5-pro": "gemini-2.5-pro",
-        "gemini-2.5-flash": "gemini-2.5-flash",
-        "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
-    }
+def get_llm_provider(
+    provider: str = "gemini",
+    model: str = "gemini-2.5-flash",
+) -> LLMProvider:
 
-    if model not in available_models:
-        available = ", ".join(f"'{m}'" for m in available_models.keys())
-        raise ValueError(f"Unknown model '{model}'. Available: {available}")
+    provider = provider.lower()
 
-    resolved_model = available_models[model]
-    return GeminiProvider(model=resolved_model)
+    if provider == "gemini":
+        return GeminiProvider(model=model)
+
+    raise ValueError(f"Unsupported provider '{provider}'. " f"Supported: 'gemini'")

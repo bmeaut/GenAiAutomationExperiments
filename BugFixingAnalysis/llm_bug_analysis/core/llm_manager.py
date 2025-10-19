@@ -1,101 +1,67 @@
-import os
 import re
 import json
 import time
-from typing import Dict, Any, Optional, Callable
-from .context_builder import ContextBuilder
-from .llm_providers import get_llm_provider
+from pathlib import Path
+from typing import Any
 from abc import ABC, abstractmethod
+
+from .context_builder import ContextBuilder
+from .llm_providers import get_llm_provider, LLMProvider
 from core.logger import log
 
 FILE_WRITE_DELAY = 0.5
 
 
 class LLMResponseHandler(ABC):
-    """
-    Abstract base class for LLM response handlers.
+    """Base for different response sources (API, file, etc.)"""
 
-    Uses Template Method pattern - defines the algorithm structure,
-    subclasses implement specific steps.
-    """
-
-    def __init__(self):
-        pass
-
-    def get_response(self, prompt: str) -> Dict[str, Any]:
-        """Template method - response from LLM."""
+    def get_response(self, prompt: str) -> dict[str, Any]:
         self._log_start()
-
-        # 2: fetch response (subclasses implement this)
         response_text = self._fetch_response(prompt)
-
-        # 3: build and return result
         return {"text": response_text, "metadata": self._get_metadata()}
 
     @abstractmethod
     def _fetch_response(self, prompt: str) -> str:
-        """
-        Fetch response from LLM.
-
-        Subclasses must implement this to define HOW to get the response
-        (API call, file, stdin, etc.)
-        """
+        """Actually get the response, implemented by subclass."""
         pass
 
     @abstractmethod
     def _log_start(self) -> None:
-        """
-        Log that we're starting to fetch response.
-
-        Subclasses implement this to show provider-specific messages.
-        """
+        """Log what's happening."""
         pass
 
-    def _get_metadata(self) -> Dict[str, int]:
-        """
-        Get metadata about the response (token counts, etc.).
-
-        Default implementation returns zeros.
-        Subclasses can override to provide real data.
-        """
-        return {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "thinking_tokens": 0,
-            "total_tokens": 0,
-        }
+    @abstractmethod
+    def _get_metadata(self) -> dict[str, int]:
+        """Token counts and other stats."""
+        # TODO: add elapsed time
+        pass
 
 
-class GeminiResponseHandler(LLMResponseHandler):
-    """Handler for Gemini API responses."""
+class APIResponseHandler(LLMResponseHandler):
+    """Handles API-based LLM providers."""
 
-    def __init__(self, model: str):
+    def __init__(self, llm_provider: LLMProvider):
         super().__init__()
-        self.model = model
+        self.llm_provider = llm_provider
         self._metadata = {}
 
     def _log_start(self) -> None:
-        log(f"  --> Using Gemini API ({self.model})")
-        log(f"  --> Generating fix...")
+        provider = self.llm_provider.__class__.__name__.replace("Provider", "")
+        model = getattr(self.llm_provider, "model", "unknown")
+        log(f"  --> Using {provider} API ({model})")
 
     def _fetch_response(self, prompt: str) -> str:
-
         try:
-
-            llm = get_llm_provider(self.model)
-            result = llm.generate_fix(prompt)
-
+            result = self.llm_provider.generate_fix(prompt)
             self._metadata = result.get("metadata", {})
-
             self._log_token_usage()
-
             return result.get("text", "")
-
         except Exception as e:
-            log(f"  --> ERROR: Gemini API call failed: {e}")
-            return ""  # verbose error handling in GeminiProvider
+            provider = self.llm_provider.__class__.__name__
+            log(f"  --> ERROR: {provider} API failed: {e}")
+            return ""
 
-    def _get_metadata(self) -> Dict[str, int]:
+    def _get_metadata(self) -> dict[str, int]:
         return self._metadata
 
     def _log_token_usage(self) -> None:
@@ -105,342 +71,266 @@ class GeminiResponseHandler(LLMResponseHandler):
         completion = self._metadata.get("completion_tokens", 0)
 
         log(
-            f"  --> Token usage: {total} total "
+            f"  --> Tokens: {total} total "
             f"({prompt} prompt + {thinking} thinking + {completion} completion)"
         )
 
 
 class ManualResponseHandler(LLMResponseHandler):
-    """Handler for manual file-based workflow."""
+    """File based workflow for mainly testing."""
 
     def __init__(
         self,
-        project_root: str,
-        timeout_seconds: int = 300,
-        poll_interval: int = 2,
+        project_root: str | Path,
+        timeout: int = 300,
+        check_interval: int = 2,
     ):
-        """Initialize manual handler."""
         super().__init__()
-        self.project_root = project_root
-        self.timeout_seconds = timeout_seconds
-        self.poll_interval = poll_interval
+        self.project_root = Path(project_root)
+        self.timeout = timeout
+        self.check_interval = check_interval
 
-        self.prompt_file = os.path.join(project_root, "llm_prompt.txt")
-        self.response_file = os.path.join(project_root, "llm_response.txt")
+        self.prompt_file = self.project_root / "llm_prompt.txt"
+        self.response_file = self.project_root / "llm_response.txt"
 
     def _log_start(self) -> None:
-        """Log instructions for manual workflow."""
-        log(f"  --> Prompt saved to: {self.prompt_file}")
-        log(f"  --> Waiting for response file: {self.response_file}")
-        log("  --> Please:")
-        log("      1. Copy the prompt from llm_prompt.txt")
-        log("      2. Paste it to your LLM")
-        log("      3. Save the LLM's response as llm_response.txt")
-        log("      4. The tool will auto-continue when the file appears!")
+        log(f"  --> Prompt saved: {self.prompt_file}")
+        log(f"  --> Waiting for: {self.response_file}")
         log("")
-        log("  --> Or press Ctrl+C to enter response manually...")
+        log("  Copy llm_prompt.txt -> chosen LLM -> save as llm_response.txt")
+        log("  (Or press CTRL+C to type the response directly)")
 
     def _fetch_response(self, prompt: str) -> str:
-        """Get response via file or stdin."""
-
         self._save_prompt(prompt)
 
         try:
-
             response = self._wait_for_response_file()
             if response:
                 return response
 
-            # timeout - fall back to stdin
-            log(
-                f"  --> Timeout after {self.timeout_seconds}s waiting for response file"
-            )
-            log("  --> Falling back to manual input mode...")
+            log(f"  --> Timeout after {self.timeout}s")
 
         except KeyboardInterrupt:
-            # user pressed ctrl+c - fall back to stdin
-            pass
+            log("\n  --> Switching to manual input...")
 
         return self._get_stdin_response()
 
     def _save_prompt(self, prompt: str) -> None:
-        """Save prompt to file."""
-        with open(self.prompt_file, "w", encoding="utf-8") as f:
-            f.write(prompt)
+        self.prompt_file.write_text(prompt, encoding="utf-8")
 
-    def _wait_for_response_file(self) -> Optional[str]:
-        """Wait for response file to appear."""
+    def _wait_for_response_file(self) -> str | None:
         elapsed = 0
 
-        while elapsed < self.timeout_seconds:
-
-            if os.path.exists(self.response_file):
-                log(f"  --> Response file detected after {elapsed}s!")
-
-                # small delay to ensure file is fully written
-                time.sleep(FILE_WRITE_DELAY)
+        while elapsed < self.timeout:
+            if self.response_file.exists():
+                log(f"  --> Found response file after {elapsed}s!")
+                time.sleep(FILE_WRITE_DELAY)  # let file finish writing
 
                 try:
-                    with open(self.response_file, "r", encoding="utf-8") as f:
-                        response_text = f.read()
+                    text = self.response_file.read_text(encoding="utf-8")
+                    self._cleanup_files()
+                    return text
                 except Exception as e:
-                    log(f"  --> ERROR: Could not read response file: {e}")
+                    log(f"  --> ERROR: Can't read response file: {e}")
                     return None
 
-                self._cleanup_files()
-
-                return response_text
-
-            # show progress
             if elapsed % 10 == 0 and elapsed > 0:
-                log(f"  --> Still waiting... ({elapsed}s elapsed)")
+                log(f"  --> Still waiting... ({elapsed}s)")
 
-            # wait before next check
-            time.sleep(self.poll_interval)
-            elapsed += self.poll_interval
+            time.sleep(self.check_interval)
+            elapsed += self.check_interval
 
-        # timeout - no file found
         return None
 
+    def _get_metadata(self) -> dict[str, int]:
+        """Manual mode, no tokens to count."""
+        return {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "thinking_tokens": 0,
+            "total_tokens": 0,
+        }
+
     def _get_stdin_response(self) -> str:
-        """Get response from standard command line."""
+        """Read response from terminal."""
         log("")
-        log("  --> Manual input mode activated")
-        log("  --> Paste the LLM response below and press Ctrl+D on a new line:")
+        log("  Paste the response below, then press Ctrl+D:")
         log("")
 
         lines = []
         try:
             while True:
-                line = input()
-                lines.append(line)
+                lines.append(input())
         except EOFError:
-            pass  # user pressed ctrl+d - done reading
+            pass
 
         self._cleanup_files()
-
         return "\n".join(lines)
 
     def _cleanup_files(self) -> None:
-        """Delete prompt and response files."""
-        log("  --> Cleaning up prompt and response files...")
-
-        for filepath in [self.prompt_file, self.response_file]:
+        """Delete temporary files."""
+        for f in [self.prompt_file, self.response_file]:
             try:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
+                if f.exists():
+                    f.unlink()
             except Exception as e:
-                log(f"  --> Warning: Could not delete {filepath}: {e}")
-
-        log("  --> Files cleaned up")
+                log(f"  --> Warning: Couldn't delete {f}: {e}")
 
 
 class IntentParser:
-    """Parses LLM responses to extract intended structured fix."""
+    """Parse LLM responses to extract fix."""
 
-    # pre-compiled regex maybe needed for batch processing?
-    # llm thinking response is so much slower, not worth it in current use case
     JSON_PATTERNS = [
         (r"```json\s*\n(.*?)\n```", 1, "```json block"),
         (r"```\s*\n(.*?)\n```", 1, "``` block"),
         (r"\{.*\}", 0, "JSON object directly"),
     ]
 
-    def __init__(self):
-        pass
-
-    def parse(self, response_text: str) -> Optional[Dict[str, Any]]:
-        """Parse LLM response to extract JSON intent."""
-        if not response_text or not response_text.strip():
+    def parse(self, text: str) -> dict[str, Any] | None:
+        """Parse LLM response to extract from JSON format."""
+        if not text or not text.strip():
             log("  --> ERROR: Empty response")
             return None
 
-        self._debug_response(response_text)
-
-        # 1: extract JSON from response
-        json_text = self._extract_json(response_text)
-        if not json_text:
-            log("  --> ERROR: Could not find JSON in response")
+        json_str = self._extract_json(text)
+        if not json_str:
+            log("  --> ERROR: No JSON found in response")
             return None
 
-        self._debug_extracted_json(json_text)
-
-        # 2: try to parse
-        intent = self._parse_json(json_text)
+        intent = self._try_parse(json_str)
         if intent:
-            return self._validate_intent(intent)
+            return self._validate(intent)
 
-        # 3: try to fix and parse again
-        log("  --> Attempting to fix JSON and retry...")
-        json_text_cleaned = self._clean_json(json_text)
-        intent = self._parse_json(json_text_cleaned)
+        log("  --> Trying to fix JSON...")
+        fixed = self._clean_json(json_str)
+        intent = self._try_parse(fixed)
 
         if intent:
-            return self._validate_intent(intent)
+            return self._validate(intent)
 
-        # 4: all parsing failed
-        self._debug_failed_json(json_text_cleaned)
+        log(f"  --> JSON parsing failed. First 500 chars:\n{fixed[:500]}")
         return None
 
-    def _extract_json(self, response_text: str) -> Optional[str]:
-        """Extract JSON from response text."""
-
-        for pattern, group_idx, description in self.JSON_PATTERNS:
-            match = re.search(pattern, response_text, re.DOTALL)
+    def _extract_json(self, text: str) -> str | None:
+        """Find JSON in response (handles markdown code blocks)."""
+        for pattern, group, description in self.JSON_PATTERNS:
+            match = re.search(pattern, text, re.DOTALL)
             if match:
                 log(f"DEBUG: Found JSON in {description}")
-                return match.group(group_idx)
+                return match.group(group)
 
-        log("DEBUG: Using entire response as JSON")
-        return response_text
+        return text  # whole response fallback
 
-    def _parse_json(self, json_text: str) -> Optional[Dict[str, Any]]:
-        """Parse JSON text."""
+    def _try_parse(self, json_str: str) -> dict[str, Any] | None:
         try:
-            intent = json.loads(json_text)
             log("  --> Successfully parsed JSON intent")
-            return intent
+            return json.loads(json_str)
         except json.JSONDecodeError as e:
-            log(f"  --> ERROR: Failed to parse JSON: {e}")
-            log(f"  --> Error at line {e.lineno}, column {e.colno}")
+            log(f"  --> ERROR: at line {e.lineno}, column {e.colno}: {e.msg}")
             return None
 
-    def _clean_json(self, json_text: str) -> str:
-        """Fix common JSON issues."""
+    def _clean_json(self, json_str: str) -> str:
+        """Fix common JSON issues (trailing commas, etc.)."""
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", json_str)
+        return cleaned.strip()
 
-        # remove trailing commas
-        cleaned = re.sub(r",(\s*[}\]])", r"\1", json_text)
-
-        # strip whitespace
-        cleaned = cleaned.strip()
-
-        return cleaned
-
-    def _validate_intent(self, intent: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate intent has required fields.
-
-        Logs warnings for missing fields but returns intent anyway
-        (might not need all fields).
-        """
-
-        required_fields = ["fix_type", "target_file", "new_code"]
-        missing = [f for f in required_fields if f not in intent]
+    def _validate(self, intent: dict[str, Any]) -> dict[str, Any]:
+        """Check required fields in response."""
+        required = ["fix_type", "target_file", "new_code"]
+        missing = [f for f in required if f not in intent]
 
         if missing:
-            log(f"  --> WARNING: Missing required fields: {missing}")
+            log(f"  --> WARNING: Missing fields: {', '.join(missing)}")
 
         return intent
 
-    def _debug_response(self, response_text: str) -> None:
-        """Debug: Log response summary."""
-        log("\n" + "=" * 60)
-        log("DEBUG: Parsing LLM Intent")
-        log(f"DEBUG: Response length: {len(response_text)} chars")
-        log(f"DEBUG: First 200 chars: {response_text[:200]}")
-        log("=" * 60 + "\n")
 
-    def _debug_extracted_json(self, json_text: str) -> None:
-        """Debug: Log extracted JSON summary."""
-        log(f"DEBUG: Extracted JSON length: {len(json_text)} chars")
-        log(f"DEBUG: First 300 chars of JSON: {json_text[:300]}")
+class LLMManager:
+    """Manager for LLM interactions."""
 
-    def _debug_failed_json(self, json_text: str) -> None:
-        """Debug: Log failed JSON for inspection."""
-        log(f"DEBUG: Failed JSON text:\n{json_text[:500]}")
+    def __init__(self, project_root: Path):
+        self.project_root = Path(project_root)
 
+    def generate_fix_with_intent(
+        self,
+        bug: dict[str, Any],
+        repo_path: Path,
+        provider: str = "gemini",
+        model: str = "gemini-2.5-flash",
+    ) -> dict[str, Any]:
+        """Generate fix using TODO:."""
 
-def generate_fix_with_intent(
-    bug: Dict[str, Any],
-    repo_path: str,
-    provider: str = "gemini",
-    model: str = "gemini-2.5-flash",
-) -> Dict[str, Any]:
-    """
-    Generate fix using AAG/RAG context and ask for structured response.
-    """
-    # 1: build rich context using AAG/RAG
-    builder = ContextBuilder(repo_path=repo_path, max_snippets=5, debug=True)
-    context, context_text = builder.build_and_format(bug)
+        builder = ContextBuilder(repo_path=repo_path, max_snippets=5, debug=True)
+        context, context_text = builder.build_and_format(bug)
 
-    # 2: build prompt from template
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    prompt = _build_prompt(bug, context_text, project_root)
+        prompt = self._build_prompt(bug, context_text)
+        handler = self._create_response_handler(provider, model)
+        result = handler.get_response(prompt)
 
-    # 3: get response from LLM using appropriate handler
-    handler = _create_response_handler(provider, model, project_root)
-    result = handler.get_response(prompt)
+        text = result.get("text", "")
+        metadata = result.get("metadata", {})
+        result_model = model if provider == "gemini" else "manual"
 
-    response_text = result.get("text", "")
-    metadata = result.get("metadata", {})
+        if not text or not text.strip():
+            log("  --> ERROR: No response received!")
+            return {
+                "intent": None,
+                "context": context,
+                "prompt": prompt,
+                "raw_response": "",
+                "provider": provider,
+                "model": result_model,
+                "metadata": metadata,
+            }
 
-    result_model = model if provider == "gemini" else "manual"
+        log(f"  --> Response: ({len(text)} chars)")
 
-    # 4: validate we got a response
-    if not response_text or not response_text.strip():
-        log("  --> ERROR: No response received!")
+        parser = IntentParser()
+        intent = parser.parse(text)
+
         return {
-            "intent": None,
+            "intent": intent,
             "context": context,
             "prompt": prompt,
-            "raw_response": "",
+            "raw_response": text,
             "provider": provider,
             "model": result_model,
             "metadata": metadata,
         }
 
-    log(f"  --> Response received ({len(response_text)} chars)")
+    def _build_prompt(
+        self,
+        bug: dict[str, Any],
+        context_text: str,
+    ) -> str:
+        """Fill prompt with context."""
+        template_path = (
+            self.project_root / "llm_bug_analysis" / "prompts" / "generate_fix.txt"
+        )
 
-    # 5: parse the JSON response
-    parser = IntentParser()
-    intent = parser.parse(response_text)
+        if not template_path.exists():
+            raise FileNotFoundError(f"Prompt template not found: {template_path}")
 
-    # 6: return complete result
-    return {
-        "intent": intent,
-        "context": context,
-        "prompt": prompt,
-        "raw_response": response_text,
-        "provider": provider,
-        "model": result_model,
-        "metadata": metadata,
-    }
+        template = template_path.read_text(encoding="utf-8")
 
+        return template.format(
+            repo_name=bug.get("repo_name", "Unknown"),
+            bug_commit_sha=bug.get("bug_commit_sha", "Unknown")[:7],
+            issue_title=bug.get("issue_title", "No title"),
+            issue_body=bug.get("issue_body", "No description"),
+            code_context=context_text,
+        )
 
-def _build_prompt(
-    bug: Dict[str, Any],
-    context_text: str,
-    project_root: str,
-) -> str:
-    """Build prompt from template and bug data."""
-    template_path = os.path.join(
-        project_root, "llm_bug_analysis", "prompts", "generate_fix.txt"
-    )
+    def _create_response_handler(
+        self,
+        provider: str,
+        model: str,
+    ) -> LLMResponseHandler:
+        """Factory for response handlers."""
+        provider = provider.lower()
 
-    if not os.path.exists(template_path):
-        error_msg = f"ERROR: Prompt template not found at {template_path}"
-        log(f"  --> {error_msg}")
-        raise FileNotFoundError(error_msg)
+        if provider == "manual":
+            return ManualResponseHandler(self.project_root)
 
-    with open(template_path, "r", encoding="utf-8") as f:
-        prompt_template = f.read()
-
-    return prompt_template.format(
-        repo_name=bug.get("repo_name", "Unknown"),
-        bug_commit_sha=bug.get("bug_commit_sha", "Unknown")[:7],
-        issue_title=bug.get("issue_title", "No title"),
-        issue_body=bug.get("issue_body", "No description provided"),
-        code_context=context_text,
-    )
-
-
-def _create_response_handler(
-    provider: str,
-    model: str,
-    project_root: str,
-) -> LLMResponseHandler:
-    """Create response handler based on provider."""
-    if provider.lower() == "gemini":
-        return GeminiResponseHandler(model)
-    else:
-        return ManualResponseHandler(project_root)
+        llm_provider = get_llm_provider(provider, model)
+        return APIResponseHandler(llm_provider)

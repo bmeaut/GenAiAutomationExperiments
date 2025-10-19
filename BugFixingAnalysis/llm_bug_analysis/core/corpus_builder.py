@@ -1,52 +1,43 @@
 import json
 import ast
 import re
-import os
 from pathlib import Path
-from dotenv import load_dotenv
-from typing import Optional, Dict, Any, Callable
+from typing import Any
 from github import Github, GithubException
 from github.Commit import Commit
 from github.Repository import Repository
 from github.Issue import Issue
+
 from core.logger import log
+from .github_client import GitHubClient
 
 
 class DocstringStripper(ast.NodeTransformer):
-    """
-    AST transformer that removes docstrings from Python code.
-    Used to detect functional changes vs documentation-only changes.
-    Subfunctions are called by Python's AST framework.
-    """
+    """Strips docstrings from Python AST nodes for comparison."""
 
     def _strip_docstring(self, node):
-        """Helper to strip docstring from a node if present."""
         if ast.get_docstring(node):
             node.body = node.body[1:]
         self.generic_visit(node)
         return node
 
     def visit_FunctionDef(self, node):
-        """Remove docstring from function definitions."""
         return self._strip_docstring(node)
 
     def visit_AsyncFunctionDef(self, node):
-        """Remove docstring from async function definitions."""
         return self._strip_docstring(node)
 
     def visit_ClassDef(self, node):
-        """Remove docstring from class definitions."""
         return self._strip_docstring(node)
 
     def visit_Module(self, node):
-        """Remove docstring from module."""
         return self._strip_docstring(node)
 
 
 class BugFixFilter:
-    """Filters for identifying real bug fix commits."""
+    """Filters for identifying bugfix commits vs. features/refactors."""
 
-    def __init__(self, config: Dict):
+    def __init__(self, config: dict):
 
         self.skip_keywords = config.get("skip_keywords", [])
         self.bug_fix_keywords = config.get("bug_fix_keywords", [])
@@ -60,18 +51,15 @@ class BugFixFilter:
         )
 
     def is_likely_bug_fix(self, title: str, body: str) -> bool:
-        """
-        Use heuristics to determine if a commit is likely a bug fix.
-        """
+        """Looks for keywords like "fix", "bug", "issue" and filters doc/test fixes."""
+
         title_lower = title.lower()
         body_lower = (body or "").lower()
 
-        # check skip keywords first (early exit)
         for keyword in self.skip_keywords:
             if keyword in title_lower or keyword in body_lower[:200]:
                 return False
 
-        # check bug fix keywords in title
         for keyword in self.bug_fix_keywords:
             if keyword in title_lower:
                 # filter out doc/test fixes
@@ -100,18 +88,10 @@ class IssueLinker:
 
     def __init__(self, repo: Repository, bug_filter: BugFixFilter):
         self.repo = repo
-        self.filter = bug_filter  # already have it, why not use it
+        self.filter = bug_filter
 
-    def extract_issue_data(self, commit_message: str) -> Optional[dict[str, str]]:
-        """
-        Extract issue data from commit message.
-
-        Priority order:
-        1. Direct issue reference (#123) with bug label -> Use issue
-        2. PR with linked issue -> Use linked issue
-        3. PR without linked issue but has bug label -> Use PR as pseudo-issue
-        4. PR that looks like bug fix (heuristic) -> Use PR as pseudo-issue
-        """
+    def extract_issue_data(self, commit_message: str) -> dict[str, str] | None:
+        """Extract issue data from commit message."""
         issue_number = self._extract_issue_number(commit_message)
         if not issue_number:
             return None
@@ -126,68 +106,60 @@ class IssueLinker:
 
         except GithubException:
             log(
-                f"    --> Could not fetch reference #{issue_number}. "
-                f"It may be private or deleted. Skipping."
+                f"    --> Could not fetch #{issue_number}. "
+                f"Might be private or deleted."
             )
             return None
 
-    def _extract_issue_number(self, text: str) -> Optional[int]:
-        """Extract first issue/PR number from text."""
+    def _extract_issue_number(self, text: str) -> int | None:
+        """Find first #123 ref in text."""
         match = re.search(r"#(\d+)", text)
         return int(match.group(1)) if match else None
 
-    def _create_issue_data(self, title: str, body: str, source: str) -> Dict[str, str]:
-        """Create a standardized issue data dict."""
-        log(f"    --> Successfully fetched {source}: {title}")
+    def _create_issue_data(self, title: str, body: str, source: str) -> dict[str, str]:
+        log(f"    --> Got {source}: {title}")
         return {
             "issue_title": title,
             "issue_body": body or "No description provided.",
         }
 
-    def _process_issue(self, issue: Issue) -> Dict[str, str]:
-        """Process a direct issue reference."""
+    def _process_issue(self, issue: Issue) -> dict[str, str]:
+        """Get data from a direct issue reference."""
         log(f"    --> Found Issue #{issue.number}: {issue.title}")
 
         if self.filter.has_bug_label(issue):
-            log(f"    --> Issue has bug label - confirmed bug!")
+            log(f"    --> Has bug label")
 
         return self._create_issue_data(
             issue.title, issue.body or "", f"Issue #{issue.number}"
         )
 
-    def _process_pull_request(self, pr: Issue) -> Optional[dict[str, str]]:
-        """Process a pull request to extract issue data."""
+    def _process_pull_request(self, pr: Issue) -> dict[str, str] | None:
+        """Get bug data from PR."""
         log(f"    --> Found PR #{pr.number}: {pr.title}")
 
         pr_body = pr.body or ""
 
-        # step 1: find linked issue if it exists
+        # find linked issue if it exists
         linked_issue = self._find_linked_issue(pr_body)
         if linked_issue:
             return linked_issue
 
-        # step 2: check for bug label - can a PR even have that? TODO
+        # check for bug label
         if self.filter.has_bug_label(pr):
-            log(f"    --> PR has bug label/type - confirmed bug!")
+            log(f"    --> Has bug label")
             return self._create_issue_data(pr.title, pr_body, "PR description")
 
-        # step 3: heuristic check
+        # heuristic check
         if self.filter.is_likely_bug_fix(pr.title, pr_body):
-            log(
-                f"    --> PR #{pr.number} has no linked issue or bug label, "
-                f"but appears to be a bug fix (heuristic)."
-            )
+            log(f"    --> Looks like a bug fix based on keywords")
             return self._create_issue_data(pr.title, pr_body, "PR description")
 
-        # step 4: not a bug fix
-        log(
-            f"    --> PR #{pr.number} does not link to an issue and "
-            f"doesn't appear to be a bug fix. Skipping."
-        )
+        log(f"    --> Not a bug fix, skipping PR #{pr.number}.")
         return None
 
-    def _find_linked_issue(self, pr_body: str) -> Optional[dict[str, str]]:
-        """Find and fetch linked issue from PR body."""
+    def _find_linked_issue(self, pr_body: str) -> dict[str, str] | None:
+        """Look for 'Fixes #123' style issue links."""
         link_keywords = ["fixes", "closes", "resolves"]
         pattern = rf"(?i)({'|'.join(link_keywords)})\s+#(\d+)"
         match = re.search(pattern, pr_body)
@@ -196,7 +168,7 @@ class IssueLinker:
             return None
 
         linked_number = int(match.group(2))
-        log(f"    --> Found linked Issue #{linked_number} in PR body. Fetching it.")
+        log(f"    --> Found linked issue #{linked_number}")
 
         try:
             linked_issue = self.repo.get_issue(number=linked_number)
@@ -209,7 +181,7 @@ class IssueLinker:
                 return None
 
             if self.filter.has_bug_label(linked_issue):
-                log(f"    --> Linked issue has bug label/type - confirmed bug!")
+                log(f"    --> Linked issue has bug label")
 
             return self._create_issue_data(
                 linked_issue.title, linked_issue.body or "", f"Issue #{linked_number}"
@@ -221,16 +193,13 @@ class IssueLinker:
 
 
 class CommitAnalyzer:
-    """Analyzes commits to determine if they contain functional bug fixes."""
+    """Checks if commits actually change code (not just comments)."""
 
     def __init__(self, repo: Repository, bug_filter: BugFixFilter):
-
         self.repo = repo
         self.issue_linker = IssueLinker(repo, bug_filter)
 
     def is_functional_change(self, parent_sha, commit_sha, file_path) -> bool:
-        """Checks if a commit introduced a functional code change."""
-
         try:
             content_before = self._get_file_content(file_path, parent_sha)
             content_after = self._get_file_content(file_path, commit_sha)
@@ -250,11 +219,9 @@ class CommitAnalyzer:
 
     def _get_file_content(self, file_path: str, ref: str) -> str:
         """Get file content at specific commit."""
-
         content_file = self.repo.get_contents(file_path, ref=ref)
 
-        # get_contents can return a list or single file
-        # for a specific file path, it should always be a single file
+        # get_contents returns single file for specific paths
         if isinstance(content_file, list):
             raise ValueError(f"Expected single file, got list for {file_path}")
 
@@ -262,44 +229,34 @@ class CommitAnalyzer:
 
     def process_commit(
         self, commit: Commit, keywords: list[str]
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Analyzes a commit to determine if it's a valid bug fix.
+    ) -> dict[str, Any] | None:
+        """Check if it's a valid bug fix."""
 
-        A commit must pass all these filters:
-        1. Not a merge commit
-        2. Contains bug fix keywords
-        3. Linked to a GitHub issue/PR
-        4. Modifies Python files
-        5. Has functional code changes (not just docs)
-        """
-        # filter 1: skip merges
+        # skip merges
         if len(commit.parents) != 1:
             return None
 
-        # filter 2: keywords from config
+        # mentions fix/bug/etc
         commit_message = commit.commit.message
         if not any(keyword in commit_message.lower() for keyword in keywords):
             return None
 
-        # filter 3: commit must be linked to a real issue
+        # must be linked to a real issue
         issue_data = self.issue_linker.extract_issue_data(commit_message)
         if not issue_data:
             return None
 
-        # filter 4: only interested in changes to .py files
-        py_files_changed = [f for f in commit.files if f.filename.endswith(".py")]
-        if not py_files_changed:
+        py_files = [f for f in commit.files if f.filename.endswith(".py")]
+        if not py_files:
             return None
 
-        # filter 5: functional change or just mistyped comment
         parent_sha = commit.parents[0].sha
-        has_functional_change = any(
+        changed_code = any(
             self.is_functional_change(parent_sha, commit.sha, py_file.filename)
-            for py_file in py_files_changed
+            for py_file in py_files
         )
 
-        if not has_functional_change:
+        if not changed_code:
             log(
                 f"  Skipping commit {commit.sha[:7]}: Changes are only in comments/docstrings."
             )
@@ -311,65 +268,36 @@ class CommitAnalyzer:
             "bug_commit_sha": commit.sha,
             "parent_commit_sha": parent_sha,
             "commit_message": commit_message.split("\n")[0],
-            **issue_data,  # merge the returned issue data dictionary
+            **issue_data,
         }
 
 
 class CorpusBuilder:
-    """
-    Main corpus builder orchestrator.
-
-    Coordinates the process of:
-    1. Loading configuration from config.json and .env
-    2. Connecting to GitHub API
-    3. Processing repositories to find bug fixes
-    4. Saving results to corpus.json
-
-    All filter keywords must be defined in config.json.
-    """
+    """Builds a collection of bugfix commits from GitHub repos."""
 
     def __init__(self):
 
-        self.config: Optional[Dict[str, Any]] = None
-        self.github_client: Optional[Github] = None
+        self.config: dict[str, Any] | None = None
+        self.github_client: Github | None = None
 
     def _load_configuration(self) -> bool:
-        """
-        Load configuration from config.json and .env.
-        """
-        # script_path = os.path.abspath(__file__)
+        """Load repos and filters from config.json."""
+
         project_root = Path(__file__).parent.parent
         config_path = project_root / "config.json"
-        env_path = project_root / ".env"
 
-        # load GitHub token
-        load_dotenv(dotenv_path=env_path)
-        token = os.getenv("GITHUB_TOKEN")
-        if not token:
-            log(f"ERROR: GITHUB_TOKEN not found in {env_path}")
-            return False
-
-        # load config file
         try:
             with open(config_path) as f:
                 config = json.load(f)
 
-            # validate required keys
-            required_keys = ["repositories"]
-            missing_keys = [key for key in required_keys if key not in config]
-            if missing_keys:
-                raise KeyError(
-                    f"Missing required keys in config.json: {', '.join(missing_keys)}"
-                )
+            if "repositories" not in config:
+                raise KeyError("Missing 'repositories' in config.json")
 
-            # validate optional keys with defaults
+            # defaults
             config.setdefault("max_commits_per_repo", 3)
             config.setdefault("commit_search_depth", 300)
 
-            # store config
-            config["token"] = token
             self.config = config
-
             return True
 
         except FileNotFoundError:
@@ -379,36 +307,36 @@ class CorpusBuilder:
             log(f"ERROR: {e}")
             return False
         except json.JSONDecodeError as e:
-            log(f"ERROR: Invalid JSON in config.json - {e}")
+            log(f"ERROR: Invalid JSON - {e}")
             return False
 
-    def _process_repository(self, repo_name: str) -> list[Dict[str, Any]]:
-        """
-        Process a single repository to find bug fixes.
-        """
+    def _process_repository(self, repo_name: str) -> list[dict[str, Any]]:
+        """Find bugfix commits in a single repo."""
         log(f"Processing repository: {repo_name}")
 
-        # Assert preconditions
-        # TODO: can I make these assumptions?
-        assert self.github_client is not None, "GitHub client must be initialized"
-        assert self.config is not None, "Config must be loaded"
+        if not self.github_client or not self.config:
+            raise RuntimeError("Load config and init GitHub client first")
 
         bugs = []
 
         try:
             repo = self.github_client.get_repo(repo_name)
 
-            # create filter and analyzer for this repository
             bug_filter = BugFixFilter(self.config)
             analyzer = CommitAnalyzer(repo, bug_filter)
 
-            # process commits up to defined search depth
-            commits = repo.get_commits()[: self.config["commit_search_depth"]]
+            max_depth = self.config["commit_search_depth"]
+            max_bugs = self.config["max_commits_per_repo"]
 
-            for commit in commits:
-                if not isinstance(commit, Commit):
-                    continue
+            commit_count = 0
+            # paginated list did not work with simple for loop
+            for commit in repo.get_commits():
+                commit_count += 1
+                if commit_count > max_depth:
+                    log(f"  Searched {max_depth} commits, stopping.")
+                    break
 
+                # Process the commit
                 bug_data = analyzer.process_commit(
                     commit, self.config["commit_keywords"]
                 )
@@ -416,15 +344,13 @@ class CorpusBuilder:
                 if bug_data:
                     bugs.append(bug_data)
                     log(
-                        f"  Found FUNCTIONAL fix ({len(bugs)}/{self.config['max_commits_per_repo']}): "
+                        f"  Found FUNCTIONAL fix ({len(bugs)}/{max_bugs}): "
                         f"{bug_data['bug_commit_sha'][:7]} - {bug_data['commit_message']}"
                     )
 
-                if len(bugs) >= self.config["max_commits_per_repo"]:
-                    log(
-                        f"  Reached limit of {self.config['max_commits_per_repo']} "
-                        f"for {repo_name}."
-                    )
+                # stop after finding enough
+                if len(bugs) >= max_bugs:
+                    log(f"  Reached limit of {max_bugs} for {repo_name}.")
                     break
 
         except GithubException as e:
@@ -432,10 +358,8 @@ class CorpusBuilder:
 
         return bugs
 
-    def _save_corpus(self, bug_corpus: list[Dict[str, Any]]) -> None:
-        """
-        Save the bug corpus to corpus.json.
-        """
+    def _save_corpus(self, bug_corpus: list[dict[str, Any]]) -> None:
+        """Save the bugs to corpus.json."""
         project_root = Path(__file__).parent.parent
         corpus_path = project_root / "corpus.json"
 
@@ -443,38 +367,26 @@ class CorpusBuilder:
             json.dump(bug_corpus, f, indent=2)
 
     def build(self) -> None:
-        """Build the bug fix corpus from configured repositories."""
-        # step 1
+        """Build the bugfix corpus from configured repos."""
         if not self._load_configuration():
-            return  # error already logged
+            return
 
-        # help type checker TODO maybe assert?
         config = self.config
         if config is None:
             return
 
-        # step 2
-        self.github_client = Github(config["token"])
+        try:
+            self.github_client = GitHubClient.get_client()
+        except ValueError as e:
+            log(f"ERROR: {e}")
+            return
 
-        assert self.github_client is not None
+        all_bugs = []
 
-        bug_corpus = []
-
-        # step 3
         for repo_url in config["repositories"]:
             repo_name = repo_url.replace("https://github.com/", "")
             bugs = self._process_repository(repo_name)
-            bug_corpus.extend(bugs)
+            all_bugs.extend(bugs)
 
-        # step 4
-        self._save_corpus(bug_corpus)
-
-        log(f"Corpus build complete. Found {len(bug_corpus)} actionable bug fixes.")
-
-
-def build():
-    """
-    Build bug fix corpus from configured repositories.
-    """
-    builder = CorpusBuilder()
-    builder.build()
+        self._save_corpus(all_bugs)
+        log(f"Done! Found {len(all_bugs)} bug fixes total.")
