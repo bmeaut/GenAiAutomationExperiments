@@ -1,34 +1,30 @@
 import shutil
 import atexit
-import os
-from typing import Callable, Optional
+from pathlib import Path
+
 from core.logger import log
 
-# cache path definition
-script_path = os.path.abspath(__file__)
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_path)))
-VENV_CACHE_PATH = os.path.join(project_root, "venv_cache")
+
+VENV_CACHE_PATH = Path(__file__).parent.parent.parent / "venv_cache"
+
+# no duplicates
+_active_temp_dirs: set[Path] = set()
 
 
-# keep note of temp directories
-# set to avoid duplicates
-_active_temp_dirs = set()
-
-
-def register_temp_dir(path: str):
+def register_temp_dir(path: str | Path):
     log(f"[Cleanup Manager] Registered: {path}")
-    _active_temp_dirs.add(path)
+    _active_temp_dirs.add(Path(path))
 
 
-def unregister_temp_dir(path: str):
+def unregister_temp_dir(path: str | Path):
     log(f"[Cleanup Manager] Unregistered: {path}")
-    _active_temp_dirs.discard(path)
+    _active_temp_dirs.discard(Path(path))
 
 
 def clear_venv_cache():
     """Finds and safely deletes the entire venv_cache directory."""
     log("--- Starting venv cache cleanup ---")
-    if os.path.exists(VENV_CACHE_PATH):
+    if VENV_CACHE_PATH.exists():
         try:
             log(f"  Deleting cache directory: {VENV_CACHE_PATH}")
             shutil.rmtree(VENV_CACHE_PATH)

@@ -1,14 +1,14 @@
 import os
 import lizard
 import complexipy
-from typing import Callable, Dict, Any
+from typing import Any
+
 from core.logger import log
 
 
-# using type hints because Pylance complained (probably for a reason)
 def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
     """
-    Analyzes a list of Python files for a suite of code quality metrics.
+    Analyzes Python files for code quality metrics.
     """
     total_cc = 0
     total_cognitive = 0
@@ -16,7 +16,7 @@ def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
     total_tokens = 0
     function_count = 0
 
-    # filter for valid Python file paths.
+    # only look at actual Python files
     py_files = [f for f in filenames if f and f.endswith(".py")]
 
     for filename in py_files:
@@ -27,7 +27,8 @@ def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
             file_params = 0
             file_tokens = 0
             file_func_count = 0
-            # lizard for metrics except cognitive complexity
+
+            # lizard for most metrics
             lizard_analyzer = lizard.FileAnalyzer(lizard.get_extensions([]))
             lizard_result = lizard_analyzer(full_path)
             for func in lizard_result.function_list:
@@ -40,7 +41,6 @@ def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
             complexipy_result = complexipy.file_complexity(full_path)
             file_cognitive += complexipy_result.complexity
 
-            # if all analyses succeeded, add temporary values to totals
             total_cc += file_cc
             total_cognitive += file_cognitive
             total_params += file_params

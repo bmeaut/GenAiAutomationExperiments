@@ -1,6 +1,6 @@
-from typing import Callable, Optional
+from typing import Callable
 
-_log_callback: Optional[Callable[[str], None]] = None
+_log_callback: Callable[[str], None] | None = None
 
 
 def set_callback(callback: Callable[[str], None]):

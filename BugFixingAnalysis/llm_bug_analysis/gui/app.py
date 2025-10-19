@@ -2,8 +2,11 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 import json
 import threading
-from core import corpus_builder, pipeline, logger
+from pathlib import Path
+from core import logger
+from core.pipeline import AnalysisPipeline
 from core.logger import log
+from core.corpus_builder import CorpusBuilder
 
 
 class ANSIColor:
@@ -20,7 +23,7 @@ class ANSIColor:
 
 
 class BugAnalysisGUI(tk.Frame):
-    """Main GUI application for the LLM Bug Analysis Framework."""
+    """Main GUI application."""
 
     def __init__(self, master=None):
 
@@ -34,9 +37,9 @@ class BugAnalysisGUI(tk.Frame):
         self.llm_provider = tk.StringVar(value="manual")
         self.llm_model = tk.StringVar(value="gemini-2.5-flash")
 
-        self.pipeline_resume_event = threading.Event()
-        self.pipeline_resume_event.set()
-        self.pipeline_stop_event = threading.Event()
+        self.resume_event = threading.Event()
+        self.resume_event.set()
+        self.stop_event = threading.Event()
 
         self.status_message = tk.StringVar(value="Idle")
 
@@ -51,12 +54,12 @@ class BugAnalysisGUI(tk.Frame):
 
     # pylance says event is unused, but it's needed for the bind call
     # None is needed for manual call
-    def _on_llm_provider_changed(self, _event: tk.Event | None = None):
-        """Enable/disable model dropdown based on provider selection."""
+    def _on_llm_provider_changed(self, _event=None):
+        """Enable/disable model dropdown list."""
         self._update_model_dropdown_state()
 
     def _update_model_dropdown_state(self):
-        """Update the model dropdown state based on current provider selection."""
+
         if self.llm_provider.get() == "manual":
             self.model_dropdown.config(state="disabled")
         else:
@@ -64,14 +67,13 @@ class BugAnalysisGUI(tk.Frame):
 
     def _create_widgets(self):
         """Build all GUI components."""
-        self._create_repository_section()
-        self._create_control_section()
-        self._create_corpus_viewer()
+        self._build_repository_section()
+        self._setup_controls()
+        self._add_corpus_viewer()
         self._create_log_viewer()
-        self._create_status_bar()
+        self._add_status_bar()
 
-    def _create_repository_section(self):
-        """Create repository management UI section."""
+    def _build_repository_section(self):
         repo_frame = tk.LabelFrame(self, text="Target Repositories")
         repo_frame.pack(fill="x", expand=False, pady=5)
 
@@ -87,69 +89,66 @@ class BugAnalysisGUI(tk.Frame):
         ).pack(fill="x")
         button_container.pack(side="right", fill="y")
 
-    def _create_control_section(self):
-        """Create main control panel UI section."""
-        control_frame = tk.LabelFrame(self, text="Controls")
-        control_frame.pack(fill="x", expand=False, pady=10)
+    def _setup_controls(self):
+        controls = tk.LabelFrame(self, text="Controls")
+        controls.pack(fill="x", expand=False, pady=10)
 
-        self._create_pipeline_controls(control_frame)
-        self._create_analysis_options(control_frame)
-        self._create_llm_configuration(control_frame)
-        self._create_action_buttons(control_frame)
+        self._add_pause_stop(controls)
+        self._create_analysis_options(controls)
+        self._add_llm_dropdown(controls)
+        self._create_action_buttons(controls)
 
-    def _create_pipeline_controls(self, parent: tk.Widget):
-        """Create pause/resume/stop pipeline controls."""
-        control_container = tk.Frame(parent)
-        control_container.pack(fill="x", padx=5, pady=5)
+    def _add_pause_stop(self, parent):
+        """Pause/resume/stop pipeline controls."""
+        controls = tk.Frame(parent)
+        controls.pack(fill="x", padx=5, pady=5)
 
         self.pause_button = tk.Button(
-            control_container,
+            controls,
             text="Pause",
-            command=self._pause_analysis_pipeline,
+            command=self._pause_pipeline,
             state=tk.DISABLED,
         )
         self.pause_button.pack(side="left", expand=True, fill="x", padx=2)
 
         self.resume_button = tk.Button(
-            control_container,
+            controls,
             text="Resume",
-            command=self._resume_analysis_pipeline,
+            command=self._resume_pipeline,
             state=tk.DISABLED,
         )
         self.resume_button.pack(side="left", expand=True, fill="x", padx=2)
 
         self.stop_button = tk.Button(
-            control_container,
+            controls,
             text="Stop",
-            command=self._stop_analysis_pipeline,
+            command=self._stop_pipeline,
             state=tk.DISABLED,
             fg="red",
         )
         self.stop_button.pack(side="left", expand=True, fill="x", padx=2)
 
-    def _create_analysis_options(self, parent: tk.Widget):
-        """Create analysis option checkboxes."""
-        options_container = tk.Frame(parent)
-        options_container.pack(fill="x", padx=5, pady=2)
+    def _create_analysis_options(self, parent):
+        """Checkboxes for dry run and debug mode."""
+        options = tk.Frame(parent)
+        options.pack(fill="x", padx=5, pady=2)
 
         tk.Checkbutton(
-            options_container,
+            options,
             text="Skip LLM Fix (Dry Run)",
             variable=self.dry_run_enabled,
         ).pack(side="left")
 
         tk.Checkbutton(
-            options_container,
+            options,
             text="Pause on Failure (Debug)",
             variable=self.debug_mode_enabled,
         ).pack(side="left", padx=10)
 
-        tk.Button(options_container, text="Clear Log", command=self._clear_log).pack(
-            side="right"
-        )
+        tk.Button(options, text="Clear Log", command=self._clear_log).pack(side="right")
 
-    def _create_llm_configuration(self, parent: tk.Widget):
-        """Create LLM provider and model selection controls."""
+    def _add_llm_dropdown(self, parent):
+        """Dropdown for models and manual mode."""
         llm_container = tk.Frame(parent)
         llm_container.pack(fill="x", padx=5, pady=5)
 
@@ -179,38 +178,37 @@ class BugAnalysisGUI(tk.Frame):
         # init dropdown state
         self._on_llm_provider_changed(None)
 
-    def _create_action_buttons(self, parent: tk.Widget):
-        """Create main action buttons for corpus building and analysis."""
-        self.action_button_container = tk.Frame(parent)
-        self.action_button_container.pack(fill="x", expand=True)
+    def _create_action_buttons(self, parent):
+        self.action_buttons = tk.Frame(parent)
+        self.action_buttons.pack(fill="x", expand=True)
 
         tk.Button(
-            self.action_button_container,
+            self.action_buttons,
             text="1. Build Bug Corpus",
             command=self._build_bug_corpus,
         ).pack(fill="x")
 
         tk.Button(
-            self.action_button_container,
+            self.action_buttons,
             text="2. Run Analysis Pipeline",
-            command=self._run_full_analysis,
+            command=self._run_all_bugs,
         ).pack(fill="x")
 
-    def _create_corpus_viewer(self):
-        """Create bug corpus viewer and single commit runner."""
+    def _add_corpus_viewer(self):
+        """Create commit viewer and single commit runner."""
         corpus_frame = tk.LabelFrame(self, text="Bug Corpus")
         corpus_frame.pack(fill="both", expand=True, pady=5)
 
         self.corpus_listbox = tk.Listbox(corpus_frame, height=8)
         self.corpus_listbox.pack(side="left", fill="both", expand=True)
 
-        controls_container = tk.Frame(corpus_frame)
+        controls = tk.Frame(corpus_frame)
         tk.Button(
-            controls_container,
+            controls,
             text="Run Selected",
-            command=self._run_selected_bug_analysis,
+            command=self._run_selected_bug,
         ).pack(fill="x", pady=2)
-        controls_container.pack(side="right", fill="y", padx=5)
+        controls.pack(side="right", fill="y", padx=5)
 
     def _create_log_viewer(self):
         """Create scrollable log viewer."""
@@ -222,15 +220,14 @@ class BugAnalysisGUI(tk.Frame):
         )
         self.log_viewer.pack(fill="both", expand=True)
 
-    def _create_status_bar(self):
-        """Create bottom status bar."""
+    def _add_status_bar(self):
         status_bar = tk.Label(
             self, textvariable=self.status_message, bd=1, relief=tk.SUNKEN, anchor=tk.W
         )
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def _configure_log_colors(self):
-        """Configure color tags for log viewer."""
+        """Configure the color of specific logged messages."""
         self.log_viewer.tag_config("SUCCESS", foreground="#2E8B57")
         self.log_viewer.tag_config("ERROR", foreground="#B22222")
         self.log_viewer.tag_config("WARNING", foreground="#DAA520")
@@ -238,52 +235,49 @@ class BugAnalysisGUI(tk.Frame):
         self.log_viewer.tag_config("INFO", foreground="black")
         self.log_viewer.tag_config("DEBUG", foreground="gray50")
 
-    def _pause_analysis_pipeline(self):
-        """Clears the resume event, causing the pipeline to wait."""
-        if self.pipeline_resume_event.is_set():
-            self.pipeline_resume_event.clear()
+    def _pause_pipeline(self):
+        if self.resume_event.is_set():
+            self.resume_event.clear()
             self._set_status("Paused...")
             self.pause_button.config(state=tk.DISABLED)
             self.resume_button.config(state=tk.NORMAL)
             log(">>> Pipeline paused by user. Click 'Resume' to continue.")
 
-    def _resume_analysis_pipeline(self):
-        """Sets the resume event, allowing the pipeline to continue."""
-        if not self.pipeline_resume_event.is_set():
-            self.pipeline_resume_event.set()
+    def _resume_pipeline(self):
+        if not self.resume_event.is_set():
+            self.resume_event.set()
             self._set_status("Busy: Resuming analysis...")
             self.pause_button.config(state=tk.NORMAL)
             self.resume_button.config(state=tk.DISABLED)
             log(">>> Pipeline resumed by user.")
 
-    def _stop_analysis_pipeline(self):
-        """Sets the stop event, signaling the pipeline to terminate gracefully."""
+    def _stop_pipeline(self):
+        """End early after current task."""
         self._set_status("Stopping...")
         # this way the thread isn't stuck paused when trying to stop
-        self.pipeline_resume_event.set()
-        self.pipeline_stop_event.set()
-        self._toggle_analysis_controls(False)  # disable buttons
-        log(">>> Stop signal sent. The pipeline will halt after the current task.")
+        self.resume_event.set()
+        self.stop_event.set()
+        self._toggle_controls(False)
+        log(">>> Pipeline stopped by user. It will end early after current task.")
 
-    def _toggle_analysis_controls(self, is_running: bool):
-        """Helper to enable/disable all relevant buttons when a task starts/stops."""
-        action_button_state = tk.DISABLED if is_running else tk.NORMAL
+    def _toggle_controls(self, is_running):
+        button_state = tk.DISABLED if is_running else tk.NORMAL
 
         # disable while task is running
-        for child in self.action_button_container.winfo_children():
+        for child in self.action_buttons.winfo_children():
             if isinstance(child, (tk.Button, tk.Checkbutton, tk.Radiobutton)):
-                child.config(state=action_button_state)
+                child.config(state=button_state)
 
         self.pause_button.config(state=tk.NORMAL if is_running else tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL if is_running else tk.DISABLED)
-        # resume should always be disabled when a task is not paused
+        # resume disabled when a task is not paused
         self.resume_button.config(state=tk.DISABLED)
 
     def _clear_log(self):
-        """Clears all text from the log viewer widget."""
-        # widget must be 'normal' to modify it, then 'disabled' again.
+        """Clear all text from log viewer."""
+
         self.log_viewer.config(state="normal")
-        self.log_viewer.delete("1.0", tk.END)  # '1.0' means line 1, character 0
+        self.log_viewer.delete("1.0", tk.END)
         self.log_viewer.config(state="disabled")
 
     def _add_repository(self):
@@ -328,6 +322,7 @@ class BugAnalysisGUI(tk.Frame):
     def _save_configuration(self):
         repos = list(self.repository_listbox.get(0, tk.END))
         config_data = {}
+
         # read the existing config first to avoid overwriting other settings
         try:
             with open("config.json", "r") as f:
@@ -342,18 +337,16 @@ class BugAnalysisGUI(tk.Frame):
         with open("config.json", "w") as f:
             json.dump(config_data, f, indent=2)
 
-    def _set_status(self, message: str):
-        """Updates the status bar's text."""
-        # after: ensures the GUI update happens on the main thread
+    def _set_status(self, message):
+        """Update status bar text."""
+        # after() is needed, so the GUI update happens on the main thread
         self.master.after(0, lambda: self.status_message.set(message))
 
-    def _log_message(self, message: str):
-        """
-        Log a message with automatic color coding based on content.
-        Outputs to both GUI log viewer and console.
-        """
-        log_tag, console_color = self._classify_log_message(message)
+    def _log_message(self, message):
+        """Log message with color coding to GUI and console."""
+        log_tag, console_color = self._color_log_message(message)
 
+        # TODO: delete later
         print(f"{console_color}{message}{ANSIColor.RESET}")
 
         def update_gui_log():
@@ -364,15 +357,12 @@ class BugAnalysisGUI(tk.Frame):
 
         self.master.after(0, update_gui_log)
 
-    def _classify_log_message(self, message: str) -> tuple[str, str]:
-        """
-        Classify log message to determine appropriate tag and color.
-        """
+    def _color_log_message(self, message) -> tuple[str, str]:
+        """Choose tag (and color) based on message keywords."""
         stripped = message.lstrip()
 
         if any(
-            keyword in stripped
-            for keyword in ["FATAL ERROR", "CRITICAL FAILURE", "FAILED"]
+            keyword in stripped for keyword in ["ERROR", "CRITICAL FAILURE", "FAILED"]
         ):
             return "ERROR", ANSIColor.RED
 
@@ -399,14 +389,56 @@ class BugAnalysisGUI(tk.Frame):
         self._save_configuration()
 
         def build_task():
-            corpus_builder.build()
+            builder = CorpusBuilder()
+            builder.build()
+
             self._load_bug_corpus()
             self._set_status("Idle")
 
         threading.Thread(target=build_task, daemon=True).start()
 
+    def _validate_corpus_ready(self) -> bool:
+        """Check if corpus.json exists and is valid."""
+        if not self.bug_corpus:
+            self._show_corpus_error("not_loaded")
+            return False
+
+        return True
+
+    def _show_corpus_error(self, error_type: str):
+        error_configs = {
+            "empty": {
+                "title": "Empty Corpus",
+                "message": "corpus.json is empty.",
+                "log": "ERROR: corpus.json is empty.",
+            },
+            "not_found": {
+                "title": "Corpus File Missing",
+                "message": "corpus.json not found.",
+                "log": "ERROR: corpus.json not found.",
+            },
+            "corrupted": {
+                "title": "Invalid Corpus File",
+                "message": "corpus.json is corrupted.",
+                "log": "ERROR: corpus.json is corrupted.",
+            },
+            "not_loaded": {
+                "title": "Corpus Not Loaded",
+                "message": "The bug corpus is not loaded.",
+                "log": "ERROR: Corpus not loaded in memory.",
+            },
+        }
+
+        config = error_configs[error_type]
+        log(config["log"])
+
+        full_message = f"{config['message']}\n\nWould you like to build the corpus now?"
+
+        if messagebox.askyesno(config["title"], full_message):
+            self._build_bug_corpus()
+
     def _load_bug_corpus(self):
-        """Load bug corpus data from corpus.json and populate viewer."""
+        """Load data from corpus.json and fill viewer."""
         self.corpus_listbox.delete(0, tk.END)
         self.bug_corpus = []
 
@@ -414,61 +446,47 @@ class BugAnalysisGUI(tk.Frame):
             with open("corpus.json", "r") as corpus_file:
                 self.bug_corpus = json.load(corpus_file)
 
+            if not self.bug_corpus:
+                self._show_corpus_error("empty")
+                return False
+
             for index, bug_data in enumerate(self.bug_corpus):
                 display_text = f"{index+1:03d}: {bug_data['repo_name']} - {bug_data['commit_message']}"
                 self.corpus_listbox.insert(tk.END, display_text)
 
-            log(
-                f"Successfully loaded {len(self.bug_corpus)} bugs into the corpus viewer."
-            )
-        except (FileNotFoundError, json.JSONDecodeError):
-            log("Could not load corpus.json. Please build the corpus.")
+            log(f"Successfully loaded {len(self.bug_corpus)} bugs into the viewer.")
+            return True
 
-    def _run_selected_bug_analysis(self):
-        """Run analysis pipeline for a single selected bug from corpus."""
+        except FileNotFoundError:
+            self._show_corpus_error("not_found")
+            return False
+        except json.JSONDecodeError:
+            self._show_corpus_error("corrupted")
+            return False
+
+    def _run_selected_bug(self):
+        """Run analysis for a selected bug."""
         selection = self.corpus_listbox.curselection()
 
         if not selection:
-            messagebox.showwarning(
-                "No Selection", "Please select a commit from the corpus list to run."
-            )
+            messagebox.showwarning("No Selection", "Select a bug from the list first.")
             return
 
-        if not self.bug_corpus:
-            messagebox.showerror(
-                "Error", "Corpus data is not loaded. Please build the corpus first."
-            )
+        if not self._validate_corpus_ready():
             return
 
         selected_bug = self.bug_corpus[selection[0]]
-        self._run_analysis_pipeline(single_bug=selected_bug)
+        self._run_pipeline(single_bug=selected_bug)
 
-    def _run_full_analysis(self):
-        """Run analysis pipeline for the entire bug corpus."""
-        try:
-            with open("corpus.json") as corpus_file:
-                if not json.load(corpus_file):
-                    log("ERROR: corpus.json is empty. Please build the corpus first.")
-                    messagebox.showerror(
-                        "Error", "Corpus is empty. Please build the corpus first."
-                    )
-                    return
-        except (FileNotFoundError, json.JSONDecodeError):
-            log(
-                "ERROR: corpus.json not found or invalid. Please build the corpus first."
-            )
-            messagebox.showerror(
-                "Error", "Corpus not found or invalid. Please build the corpus first."
-            )
+    def _run_all_bugs(self):
+        """Run analysis for the entire bug corpus."""
+        if not self._validate_corpus_ready():
             return
 
-        self._run_analysis_pipeline(single_bug=None)
+        self._run_pipeline(single_bug=None)
 
-    def _run_analysis_pipeline(self, single_bug: dict | None = None):
-        """
-        Run the analysis pipeline in a background thread.
-        If single_bug is provided, only that bug is processed.
-        """
+    def _run_pipeline(self, single_bug: dict | None = None):
+        """Run the analysis pipeline in a background thread."""
         self._reset_pipeline_state()
         self._save_configuration()
 
@@ -493,26 +511,41 @@ class BugAnalysisGUI(tk.Frame):
         self._set_status(status)
 
         def analysis_task():
-            self._toggle_analysis_controls(is_running=True)
+            self._toggle_controls(is_running=True)
             try:
-                pipeline.run(
+                config_path = Path("config.json")
+                corpus_path = Path("corpus.json")
+
+                pipeline = AnalysisPipeline.from_config_files(
+                    config_path=config_path,
                     skip_llm_fix=is_dry_run,
-                    single_bug_data=single_bug,
-                    resume_event=self.pipeline_resume_event,
-                    stop_event=self.pipeline_stop_event,
                     debug_on_failure=self.debug_mode_enabled.get(),
                     llm_provider=provider,
                     llm_model=self.llm_model.get(),
                 )
+                if single_bug:
+                    pipeline.run_single_bug(
+                        single_bug,
+                        resume_event=self.resume_event,
+                        stop_event=self.stop_event,
+                    )
+                else:
+                    corpus = json.loads(corpus_path.read_text())
+                    pipeline.run_corpus(
+                        corpus,
+                        resume_event=self.resume_event,
+                        stop_event=self.stop_event,
+                    )
+
             finally:
-                self._toggle_analysis_controls(is_running=False)
+                self._toggle_controls(is_running=False)
                 self._set_status("Idle")
-                if not self.pipeline_stop_event.is_set():
+                if not self.stop_event.is_set():
                     log(completion_message)
 
         threading.Thread(target=analysis_task, daemon=True).start()
 
     def _reset_pipeline_state(self):
-        """Reset pipeline control events for a new run."""
-        self.pipeline_stop_event.clear()
-        self.pipeline_resume_event.set()
+        """Reset control events for a new run."""
+        self.stop_event.clear()
+        self.resume_event.set()
