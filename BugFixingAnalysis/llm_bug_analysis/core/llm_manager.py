@@ -304,12 +304,15 @@ class LLMManager:
         context_text: str,
     ) -> str:
         """Fill prompt with context."""
-        template_path = (
-            self.project_root / "llm_bug_analysis" / "prompts" / "generate_fix.txt"
-        )
+        this_file = Path(__file__)
+        llm_bug_dir = this_file.parent.parent
+        template_path = llm_bug_dir / "prompts" / "generate_fix.txt"
 
         if not template_path.exists():
-            raise FileNotFoundError(f"Prompt template not found: {template_path}")
+            raise FileNotFoundError(
+                f"Prompt template not found: {template_path}\n"
+                f"Expected at: {template_path.resolve()}"
+            )
 
         template = template_path.read_text(encoding="utf-8")
 

@@ -113,7 +113,7 @@ class VirtualEnvironment:
         repo_name: str,
         commit_sha: str,
         run_type: str,
-        debug_helper: DebugHelper,
+        debug_helper: "DebugHelper",
     ) -> bool:
         """Run tests with configured exclusions."""
         cmd = test_command.split()

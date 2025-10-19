@@ -29,6 +29,9 @@ class BugAnalysisGUI(tk.Frame):
 
         super().__init__(master)
         logger.set_callback(self._log_message)
+        self.project_root = Path(__file__).parent.parent.resolve()
+        self.config_path = self.project_root / "config.json"
+        self.corpus_path = self.project_root / "corpus.json"
 
         # analysis options
         self.dry_run_enabled = tk.BooleanVar(value=False)
@@ -303,19 +306,17 @@ class BugAnalysisGUI(tk.Frame):
 
     def _load_configuration(self):
         try:
-            with open("config.json", "r") as f:
-                config = json.load(f)
-                self.repository_listbox.delete(
-                    0, tk.END
-                )  # clear existing entries first
-                for repo in config.get("repositories", []):
-                    self.repository_listbox.insert(tk.END, repo)
+            config = json.loads(self.config_path.read_text())
+            self.repository_listbox.delete(0, tk.END)
 
-                self.llm_provider.set(config.get("llm_provider", "manual"))
-                self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
+            for repo in config.get("repositories", []):
+                self.repository_listbox.insert(tk.END, repo)
+
+            self.llm_provider.set(config.get("llm_provider", "manual"))
+            self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
 
         except FileNotFoundError:
-            log("config.json not found. Using defaults.")
+            log(f"config.json not found at {self.config_path}")
         except json.JSONDecodeError:
             log("ERROR: Could not parse config.json.")
 
@@ -325,8 +326,7 @@ class BugAnalysisGUI(tk.Frame):
 
         # read the existing config first to avoid overwriting other settings
         try:
-            with open("config.json", "r") as f:
-                config_data = json.load(f)
+            config_data = json.loads(self.config_path.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 
@@ -334,8 +334,7 @@ class BugAnalysisGUI(tk.Frame):
         config_data["llm_provider"] = self.llm_provider.get()
         config_data["llm_model"] = self.llm_model.get()
 
-        with open("config.json", "w") as f:
-            json.dump(config_data, f, indent=2)
+        self.config_path.write_text(json.dumps(config_data, indent=2))
 
     def _set_status(self, message):
         """Update status bar text."""
@@ -443,8 +442,7 @@ class BugAnalysisGUI(tk.Frame):
         self.bug_corpus = []
 
         try:
-            with open("corpus.json", "r") as corpus_file:
-                self.bug_corpus = json.load(corpus_file)
+            self.bug_corpus = json.loads(self.corpus_path.read_text())
 
             if not self.bug_corpus:
                 self._show_corpus_error("empty")
@@ -513,11 +511,9 @@ class BugAnalysisGUI(tk.Frame):
         def analysis_task():
             self._toggle_controls(is_running=True)
             try:
-                config_path = Path("config.json")
-                corpus_path = Path("corpus.json")
 
                 pipeline = AnalysisPipeline.from_config_files(
-                    config_path=config_path,
+                    config_path=self.config_path,
                     skip_llm_fix=is_dry_run,
                     debug_on_failure=self.debug_mode_enabled.get(),
                     llm_provider=provider,
@@ -530,7 +526,7 @@ class BugAnalysisGUI(tk.Frame):
                         stop_event=self.stop_event,
                     )
                 else:
-                    corpus = json.loads(corpus_path.read_text())
+                    corpus = json.loads(self.corpus_path.read_text())
                     pipeline.run_corpus(
                         corpus,
                         resume_event=self.resume_event,

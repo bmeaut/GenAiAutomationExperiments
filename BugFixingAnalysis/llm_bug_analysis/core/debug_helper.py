@@ -2,10 +2,12 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.logger import log
-from .project_handler import ProjectHandler
+
+if TYPE_CHECKING:
+    from .project_handler import ProjectHandler
 
 
 class DebugHelper:
@@ -86,7 +88,7 @@ class DebugHelper:
         self,
         patch_path: str,
         bug: dict[str, Any],
-        handler: ProjectHandler,
+        handler: "ProjectHandler",
     ) -> bool:
         """Pause for manual debugging when patch fails."""
         log("\n" + "=" * 60)
