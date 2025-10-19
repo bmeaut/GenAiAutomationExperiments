@@ -1,16 +1,17 @@
-You are an expert software engineer tasked with fixing a real bug from a production codebase.
+You are an expert at fixing bugs in production code.
 
 **IMPORTANT INSTRUCTIONS:**
 - Analyze the bug report carefully to understand the root cause
 - Focus ONLY on the minimal changes needed to fix the issue
 - Preserve existing code style and patterns
-- Your patch must be in standard unified diff format
-- Test your logic mentally before providing the fix
+- Provide your solution as structured JSON (NOT a unified diff patch)
 
 ============================================================
 **BUG REPORT**
 ============================================================
 
+**Repository:** {repo_name}
+**Commit:** {bug_commit_sha}
 **Issue Title:** {issue_title}
 
 **Issue Description:**
@@ -25,80 +26,122 @@ You are an expert software engineer tasked with fixing a real bug from a product
 **YOUR TASK**
 ============================================================
 
-1. **Identify the root cause** of the bug from the issue description
-2. **Locate the problematic code** in the provided context
-3. **Generate a minimal fix** that addresses the issue without breaking existing functionality
-4. **Provide your solution** as a unified diff patch
+Analyze the bug and provide a structured fix in JSON format.
 
-The patch must be in the standard diff format, enclosed in a ```diff markdown block.
+**FIX TYPES:**
+- "add_method": Add a new method/function (use insertion_strategy)
+- "replace_method": Replace an existing method/function entirely (use target_method)
 
-**CRITICAL PATCH REQUIREMENTS:**
+**CRITICAL RULES:**
+1. Provide ONLY valid JSON - no markdown, no code blocks, no explanations
+2. The JSON must be parseable
+3. Each line in "new_code" should be a single line of code (no newlines within strings)
+4. Do NOT include indentation in the code lines - we'll add it automatically based on indentation_level
+5. For "add_method": provide insertion_strategy with type and anchor
+6. For "replace_method": provide target_method (the method to replace) and set insertion_strategy to null
+7. The "anchor" should be the exact method name (without parentheses or parameters)
 
-**File Headers:**
-- MUST start with: --- a/path/to/file.py
-- MUST have on next line: +++ b/path/to/file.py
-- Use the EXACT file path from the context sections above
+**OUTPUT FORMAT FOR ADD_METHOD:**
+{{
+    "analysis": "Brief explanation of the root cause in 1-2 sentences",
+    "fix_type": "add_method",
+    "target_file": "path/to/file.py",
+    "target_class": "ClassName",
+    "target_method": null,
+    "insertion_strategy": {{
+        "type": "after_method",
+        "anchor": "existing_method_name"
+    }},
+    "new_code": [
+        "def new_method(self):",
+        "    return self.value"
+    ],
+    "indentation_level": 4,
+    "imports_needed": [],
+    "confidence": 0.95
+}}
 
-**Hunk Headers (@@ lines):**
-- Format: @@ -start,count +start,count @@ optional context
-- Line numbers MUST be accurate
-- Counts MUST match the actual number of lines in the hunk
-- Example: @@ -384,6 +384,11 @@ means:
-  * Start at line 384 in original file
-  * Show 6 lines from original (context + deletions)
-  * Start at line 384 in new file  
-  * Show 11 lines in new file (context + additions)
+**OUTPUT FORMAT FOR REPLACE_METHOD:**
+{{
+    "analysis": "Brief explanation of what needs to be fixed",
+    "fix_type": "replace_method",
+    "target_file": "path/to/file.py",
+    "target_class": "ClassName",
+    "target_method": "method_name_to_replace",
+    "insertion_strategy": null,
+    "new_code": [
+        "def method_name_to_replace(self, param):",
+        "    # fixed implementation",
+        "    return result"
+    ],
+    "indentation_level": 4,
+    "imports_needed": ["from typing import Optional"],
+    "confidence": 0.90
+}}
 
-**Context Lines:**
-- Include EXACTLY 3-5 lines before your changes
-- Include EXACTLY 3-5 lines after your changes
-- Context lines MUST EXACTLY match the file (character-for-character)
-- Pay extreme attention to:
-  * Indentation (spaces vs tabs)
-  * Trailing whitespace
-  * Blank lines
-- Context lines start with a single space: ` context_line`
+**INSERTION STRATEGY TYPES:**
+- "after_method": Insert after a specific method (use "anchor": "method_name")
+- "before_method": Insert before a specific method (use "anchor": "method_name")
+- "end_of_class": Insert at the end of a class (use class from target_class)
 
-**Change Lines:**
-- Additions start with +: `+new_line`
-- Deletions start with -: `-old_line`
-- Changed lines show as deletion + addition
+**EXAMPLES:**
 
-**Common Mistakes to Avoid:**
-❌ Using partial/simplified context that doesn't match the actual file
-❌ Wrong indentation (count the spaces!)
-❌ Missing blank lines in context
-❌ Incorrect line numbers in @@ header
-❌ Adding explanatory text before --- or after the last line
-❌ Forgetting the newline at the end
+Example 1 - Adding a missing dunder method:
+{{
+    "analysis": "The class is missing the __ior__ method which is needed for in-place union operations (|=). Python expects this to mutate self and return self.",
+    "fix_type": "add_method",
+    "target_file": "boltons/dictutils.py",
+    "target_class": "OrderedMultiDict",
+    "target_method": null,
+    "insertion_strategy": {{
+        "type": "after_method",
+        "anchor": "__or__"
+    }},
+    "new_code": [
+        "def __ior__(self, other):",
+        "    self.update(other)",
+        "    return self"
+    ],
+    "indentation_level": 4,
+    "imports_needed": [],
+    "confidence": 0.95
+}}
 
-**EXAMPLE OF CORRECT FORMAT:**
-```diff
---- a/src/example.py
-+++ b/src/example.py
-@@ -10,7 +10,10 @@ class Example:
-     def method(self):
-         # context line
-         # context line
--        old_code = "wrong"
-+        new_code = "correct"
-+        additional_line = "added"
-         # context line
-         # context line
-```
+Example 2 - Replacing a buggy method:
+{{
+    "analysis": "The accessing_from_attrs function is missing a reference to attrs.validators.or_ which was added in recent type hint improvements. This causes the type checker to not validate the new hints.",
+    "fix_type": "replace_method",
+    "target_file": "typing-examples/baseline_examples.py",
+    "target_class": null,
+    "target_method": "accessing_from_attrs",
+    "insertion_strategy": null,
+    "new_code": [
+        "def accessing_from_attrs() -> None:",
+        "    \"\"\"",
+        "    Use a function to keep the ns clean.",
+        "    \"\"\"",
+        "    attrs.converters.optional",
+        "    attrs.exceptions.FrozenError",
+        "    attrs.filters.include",
+        "    attrs.filters.exclude",
+        "    attrs.setters.frozen",
+        "    attrs.validators.and_",
+        "    attrs.validators.or_",
+        "    attrs.cmp_using"
+    ],
+    "indentation_level": 0,
+    "imports_needed": [],
+    "confidence": 0.95
+}}
 
-**STEP-BY-STEP VERIFICATION:**
-Before submitting your patch:
-1. Count the indentation spaces in context lines - do they match?
-2. Check for blank lines - are they included in context?
-3. Verify @@ line numbers point to the correct location
-4. Count context lines: -count should equal (context + deletions), +count should equal (context + additions)
-5. Ensure the patch ends with a newline character
-
-**DEBUGGING CHECKLIST:**
+============================================================
+**DEBUGGING CHECKLIST**
+============================================================
+Before submitting, verify:
 - [ ] Does this fix address the specific error mentioned?
 - [ ] Are edge cases handled (null/empty values, boundary conditions)?
 - [ ] Will this change break existing functionality?
 - [ ] Is the fix minimal and focused?
-- [ ] Does the context EXACTLY match the file (including indentation)?
-- [ ] Are the @@ line numbers and counts correct?
+- [ ] Is the JSON properly formatted and parseable?
+- [ ] Are all required fields present?
+- [ ] Is confidence score realistic (0.0-1.0)?
