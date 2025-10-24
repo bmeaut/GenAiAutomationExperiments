@@ -10,17 +10,44 @@ Feladat: kiválasztani az alap témát, customizálni, ahol kell, majd beüzemel
 
 A Dékáni Hivatal munkatársai szeretettel várják a néhány érdeklődőt a feladatok részletes megbeszélésére.
 
-Mivel ez hamar kelleni fog:
-- Tetszőleges Excel táblában, ami egy oszlopban Neptun-kódot tartalmaz, az adatok anonimizálása. Azért, hogy mi kaphassunk teszt adatokat. Ehhez minden Neptun-kódot egy sózott hash kódra kell lecserélni, ahol a só értékét az Excel makró egy felugró ablakban kéri be. Miven nem nagyon kritikus a garantált ütközésmentesség, elég lesz az sha1(só + NeptunKód) első 6 karaktere. Több munkalap között az anonimizált kódok komparibilitását úgy lehet biztosítani, ha ugyanazt a só értéket használjuk mindegyik anonimizálásakor.
+## Excel Neptun kód anonimizáló (KÉSZ)
 
-Ami eddig felmerült:
-- Jubileumi diplomák: aki jubileumi diplomát szeretne, mindenki kitölt egy webes űrlapot, ami azonban nem támogatja a fájl csatolást, azt emailben küldik el (pl. önéletrajz), ezeket össze kell párosítani a kitöltési adatokkal. Ezután pl. a csatolt oklevél fényképen akár a sorozatszámot is lehetne ellenőrizni, hogy azt adta-e meg az űrlapon is. És lehet küldeni automatikus választ is, hogy érezze az illető a törődést. Az űrlap adatai mellé az Excel táblába akár egy cellába a teljes önéletrajzot is be lehet másolni, ha igény lesz rá.
-- Akkreditációs megfeleltetés ellenőrzése: ha egy hallgató pl. újrafelvételivel tantárgyakat akar akkreditálni, akkor kitölt egy Excel táblát, hogy melyik tárgyat melyiknek akarja elfogadtatni. Ezeket ellenőrizni kell, hogy az egyes tantervek közötti megfeleltetési szabályoknak eleget tesznek-e.
-- A BProf képzés kooperatív portáljával kapcsolatban (https://kooperativ.vik.bme.hu/) előfordul, hogy egy csomó cégnek kell emailt írni. Az email szövegében pár helyen be kell helyettesíteni pl. cég nevet, meg előfordul, hogy csatolmányt is kell küldeni, akár részben előre kitöltött űrlapokat. Lehetne automatizálni a csatolmány sablon alapján történő elkészítését (cégadatokkal feltöltését), majd az email összerakását, a fájl csatolását és a felhasználónak fel lehet dobni az Outlook email szerkesztőjében, küldésre készen.
-- A BProf portálon néha nem frissek a cégadatok. Ezért a Hivatal emailben megkérdezi, hogy van-e változás. A visszajövő emailekben megadott adatokat (az email törzsében lesz egy előre ismert formátumú táblázat) össze kell vetni a portálról kiexportált (xlsx) cégadatokkal és jelezni az eltéréseket az adminisztrátornak. Ezt egy Outlook makróval el lehet végezni, ami emaileket keres (a szövegtörzset könnyű felismerni, mert ismert sablon alapján megy ki), és kezeli az Excel táblát.
-- Hallgatói előrehaladás adatok elemzése Excel alatt (minden félévben elég sok munka)
-  - Excel tábla minden hallgató minden eredményével (külön sorban minden aláírás megadva/megtagadva, minden vizsgajegy). Hallgatónként és tárgyanként egyetlen sorba kell, hogy van-e aláírás és ha igen, mi az utolsó érvényes vizsgajegy.
-  - Hányan hanyadjára vették fel/teljesítették az adott tantárgyat.
+Tetszőleges Excel táblában, ami egy oszlopban Neptun-kódot tartalmaz, az adatok anonimizálása. Azért, hogy mi kaphassunk teszt adatokat. Ehhez minden Neptun-kódot egy sózott hash kódra kell lecserélni, ahol a só értékét az Excel makró egy felugró ablakban kéri be. Miven nem nagyon kritikus a garantált ütközésmentesség, elég lesz az sha1(só + NeptunKód) első 6 karaktere. Több munkalap között az anonimizált kódok komparibilitását úgy lehet biztosítani, ha ugyanazt a só értéket használjuk mindegyik anonimizálásakor.
+
+## Jubileumi diplomák
+
+Aki jubileumi diplomát szeretne, mindenki kitölt egy webes űrlapot, ami azonban nem támogatja a fájl csatolást, azt emailben küldik el (pl. önéletrajz), ezeket össze kell párosítani a kitöltési adatokkal. Ezután pl. a csatolt oklevél fényképen akár a sorozatszámot is lehetne ellenőrizni, hogy azt adta-e meg az űrlapon is. És lehet küldeni automatikus választ is, hogy érezze az illető a törődést. Az űrlap adatai mellé az Excel táblába akár egy cellába a teljes önéletrajzot is be lehet másolni, ha igény lesz rá.
+
+## Akkreditációs megfeleltetés ellenőrzése
+
+Ha egy hallgató pl. újrafelvételivel tantárgyakat akar akkreditálni, akkor kitölt egy Excel táblát, hogy melyik tárgyat melyiknek akarja elfogadtatni. Ezeket ellenőrizni kell, hogy az egyes tantervek közötti megfeleltetési szabályoknak eleget tesznek-e.
+
+Az egymás utáni tantervekhez van megfeleltetési táblázat, de lehet, hogy "több tanterv ugrásnyit" kell haladni. A művelet elején kérdezze meg a makró, hogy mi a céltanterv. (Néha ugyanis a hallgató jobban jár, ha nem a legfrissebb tantervre ugrik át pl. újrafelvételinél, hanem egy korábbira, mert ott több tárgyat tud elfogadtatni és azzal a tantervvel is tud végezni.)
+
+Mintafájlok Teams alatt.
+
+## BProf portál - tömeges email írása
+
+A BProf képzés kooperatív portáljával kapcsolatban (https://kooperativ.vik.bme.hu/) előfordul, hogy egy csomó cégnek kell emailt írni. Az email szövegében pár helyen be kell helyettesíteni pl. cég nevet vagy céges adatokat az XLSX alapján. Ezen kívül a táblázatban van egy oszlop, ami meghatározza a csatolandó fájl nevét (cégenként lehet, hogy mást kell csatolni, pl. ha egy rendezvényen részt vett, akkor azzal kapcsolatos anyagot is kap még.) Legyen lehetőség ;-vel elválasztva több fájlnév megadására is, hátha kelleni fog. Ezen kívül a felhasználó választhassa ki, hogy melyik e-mail címéről menjenek ki a generált levelek.
+
+A cél, hogy a felhasználónak feldobjuk a kész leveleket az Outlook email szerkesztőjében, küldésre készen.
+
+## BProf portál cégadat frissítés kérés emailben
+
+A BProf portálon néha nem frissek a cégadatok. Ezért a Hivatal emailben megkérdezi, hogy van-e változás. A visszajövő emailekben megadott adatokat (az email törzsében lesz egy előre ismert formátumú táblázat) össze kell vetni a portálról kiexportált (xlsx) cégadatokkal és jelezni az eltéréseket az adminisztrátornak. Ezt egy Outlook makróval el lehet végezni, ami emaileket keres (a szövegtörzset könnyű felismerni, mert ismert sablon alapján megy ki), és kezeli az Excel táblát.
+
+A cégek neve, adószáma néha megváltozhat, a táblázatban az első oszlopban lévő ID az, ami használható azonosításra.
+
+Mintafájlok Teams alatt.
+
+## Hallgatói előrehaladás kimutatás
+
+Hallgatói előrehaladás adatok elemzése Excel alatt (minden félévben elég sok munka)
+
+A kiindulási alap egy Excel tábla minden hallgató minden eredményével (külön sorban minden aláírás megadva/megtagadva, minden vizsgajegy). Hallgatónként és tárgyanként egyetlen sorba kell, hogy van-e aláírás és ha igen, mi az utolsó érvényes vizsgajegy.
+Ilyen táblázat mindig csak néhány kiválasztott tantárgyra kell, pl. 1. féléves mintatantervi kötelező tárgyak.
+
+Mintafájlok Teams alatt.
 
 # Vegyes ötletek, bárki válaszhatja
 
