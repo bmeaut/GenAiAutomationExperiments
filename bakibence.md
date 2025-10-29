@@ -105,3 +105,21 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
     - incremental environment setup: amíg összeszedem a bug kontextust, elég a leklónozott repo, nem kell a test setupnak elérhetőnek lennie, az készülhet addig, amíg az LLM válaszra várok
     - csak releváns tesztek futtatása, nem az összes
     - `pytest` optimalizálás
+
+# 8. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+- Befejeztem a refaktorálást, elkezdtem a tesztek frissítését/bővítését.
+- Kisebb részekre osztottam a pipelinet, hogy külön lehessen végrehajtani
+    - a kontextus kinyerést
+    - az LLM hívást
+    - a tesztelést
+    - ( a commitok begyűjtése eddig is külön volt)
+- Párhuzamosítottam a commitokból a kontextus kinyerést
+
+## Mivel fogok foglalkozni jövő héten
+- Tesztek írása
+- Teljes pipeline futtatás, adatgyűjtés
+- Adat elemzés, hibák alapján iterálás
+- Szakdolgozat írása:
+    - Váz kialakítása
+    - Vegyes, összeszedetlen jegyzetek rendezése és bővítése
