@@ -12,7 +12,11 @@ def set_callback(callback: Callable[[str], None]):
 
 def log(message: str):
     if _log_callback:
-        _log_callback(message)
+        try:
+            _log_callback(message)
+        except Exception as e:
+            print(f"ERROR: Logging callback failed: {e}")
+            print(f"Original message: {message}")
     else:
         print(message)
 
