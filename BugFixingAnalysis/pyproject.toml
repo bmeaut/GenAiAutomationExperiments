@@ -1,19 +1,63 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "llm_bug_analysis"
 version = "0.1.0"
+description = "Measure LLMs' automated bugfix capabilities"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai",
+    "PyGithub",
+    "GitPython",
+    "radon",
+    "lizard",
+    "complexipy",
+    "python-dotenv",
+    "toml",
+    "pip-tools",
+    "unidiff",
+    "libcst",
+    "diff-match-patch",
+    "scikit-learn"
+]
 
-[tool.mutmut]
-# The directory where source code lives
-paths_to_mutate = ["llm_bug_analysis/"]
-
-# The directory where tests live
-tests_dir = ["tests/"]
-
-# Files or directories to ignore during mutation testing
-paths_to_ignore = ["tests/"]
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-sugar",
+]
 
 [tool.pytest.ini_options]
-addopts = "-ra -q"
-testpaths = [
-    "tests",
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--cov=llm_bug_analysis",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+
+[tool.coverage.run]
+source = ["llm_bug_analysis"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]

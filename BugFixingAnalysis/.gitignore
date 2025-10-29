@@ -7,16 +7,26 @@ __pycache__/
 .venv/
 venv/
 venv_cache/
+*.pyc
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
 
 # IDE files
 .vscode/
 
-# Application output
+# application output
 /llm_bug_analysis/results/
 # exclude
 !/llm_bug_analysis/results/results.csv
-    
+
 /llm_bug_analysis/corpus.json
 
 # backup files
 *.backup
+
+# testing
+.coverage
+htmlcov/
+.pytest_cache/

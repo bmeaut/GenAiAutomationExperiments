@@ -1,42 +1,45 @@
-# LLM Interaction
+# LLM interaction
 google-genai
 
-# Core GitHub API and Git interaction
+# core GitHub API and git interaction
 PyGithub
 GitPython
 
-# Code Analysis
+# code snalysis
 radon
 lizard
 complexipy
 
-# Configuration and Environment
+# configuration and environment
 python-dotenv
 toml
+pip-tools
 
-# Dependency Management for target repos
+# dependency management for target repos
 poetry
 uv
 
-# Testing
+# testing
 pytest
 pytest-mock
+pytest-cov
+pytest-sugar
 
-# Analysis and Reporting
+# analysis and reporting
 pandas
 jupyterlab
 matplotlib
 seaborn
 
-# Diff/Patch Handling
+# diff/patch handling
 unidiff
 
 # AST manipulation for code transformation
 libcst
 
-# Fuzzy string matching
+# fuzzy string matching
 diff-match-patch
 
-# Natural Language Processing
+# natural language processing
 scikit-learn
 
