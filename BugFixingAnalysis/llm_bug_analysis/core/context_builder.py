@@ -1,5 +1,6 @@
 import ast
 import re
+import json
 from pathlib import Path
 from typing import Any, Union
 from git import Repo
@@ -19,6 +20,7 @@ class ContextBuilder:
         repo_path: str | Path,
         max_snippets: int = 5,
         debug: bool = True,
+        cache_dir: Path | None = None,
     ):
         repo_path = Path(repo_path)
 
@@ -29,8 +31,17 @@ class ContextBuilder:
         self.historical_analyzer = HistoricalAnalyzer(repo_path)
         self.formatter = ContextFormatter(debug)
 
+        self.cache_dir = cache_dir
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
     def build(self, bug: dict[str, Any]) -> dict[str, Any]:
         """Build from all methods."""
+
+        cached_context = self._load_from_cache(bug)
+        if cached_context is not None:
+            log("  --> Using cached context.")
+            return cached_context
 
         log("  --> Building syntax graph...")
         aag_context = self.aag_builder.build_syntax_graph(bug.get("changed_files", []))
@@ -46,12 +57,68 @@ class ContextBuilder:
         log("  --> Checking git history...")
         historical_info = self.historical_analyzer.analyze_history(bug)
 
-        return {
+        context = {
             "aag": aag_context,
             "rag": rag_context,
             "structural": structural_info,
             "historical": historical_info,
         }
+
+        self._save_to_cache(bug, context)
+        return context
+
+    def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
+        """Get cache file path for this bug."""
+        if not self.cache_dir:
+            return None
+
+        repo_name = bug.get("repo_name", "unknown_repo")
+        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+
+        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+
+        repo_cached_dir = self.cache_dir / safe_repo_name
+        repo_cached_dir.mkdir(parents=True, exist_ok=True)
+
+        cache_filename = f"{commit_sha[:12]}.json"
+
+        return repo_cached_dir / cache_filename
+
+    def _load_from_cache(self, bug: dict[str, Any]) -> dict[str, Any] | None:
+        """Load context from cache if it exists."""
+        cache_path = self._get_cache_path(bug)
+
+        if not cache_path or not cache_path.exists():
+            return None
+
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+
+            required_keys = {"aag", "rag", "structural", "historical"}
+            if not all(key in cached for key in required_keys):
+                log("  --> Cache missing required keys, rebuilding...")
+                return None
+
+            return cached
+
+        except Exception as e:
+            log(f"  --> ERROR: loading cache file: {e}, rebuilding...")
+            return None
+
+    def _save_to_cache(self, bug: dict[str, Any], context: dict[str, Any]) -> None:
+        """Save context to cache."""
+        cache_path = self._get_cache_path(bug)
+
+        if not cache_path:
+            return
+
+        try:
+            cache_path.write_text(json.dumps(context, indent=2), encoding="utf-8")
+
+            log(f"  --> Saved context to cache: {cache_path.name}")
+
+        except Exception as e:
+            log(f"  --> ERROR: saving cache file: {e}")
 
     def format(self, context: dict[str, Any]) -> str:
         """Turn context into LLM friendly text."""

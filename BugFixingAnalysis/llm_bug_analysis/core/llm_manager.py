@@ -248,8 +248,17 @@ class IntentParser:
 class LLMManager:
     """Manager for LLM interactions."""
 
-    def __init__(self, project_root: Path):
+    def __init__(
+        self,
+        project_root: Path,
+        context_cache_dir: Path | None = None,
+        patch_cache_dir: Path | None = None,
+    ):
         self.project_root = Path(project_root)
+        self.context_cache_dir = context_cache_dir
+        self.patch_cache_dir = patch_cache_dir
+        if patch_cache_dir:
+            patch_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def generate_fix_with_intent(
         self,
@@ -260,7 +269,17 @@ class LLMManager:
     ) -> dict[str, Any]:
         """Generate fix using TODO:."""
 
-        builder = ContextBuilder(repo_path=repo_path, max_snippets=5, debug=True)
+        cached_result = self._load_from_cache(bug, provider, model)
+        if cached_result is not None:
+            log("  --> Loaded result from cache")
+            return cached_result
+
+        builder = ContextBuilder(
+            repo_path=repo_path,
+            max_snippets=5,
+            debug=True,
+            cache_dir=self.context_cache_dir,
+        )
         context, context_text = builder.build_and_format(bug)
 
         prompt = self._build_prompt(bug, context_text)
@@ -269,11 +288,11 @@ class LLMManager:
 
         text = result.get("text", "")
         metadata = result.get("metadata", {})
-        result_model = model if provider == "gemini" else "manual"
+        result_model = model if provider != "manual" else "manual"
 
         if not text or not text.strip():
             log("  --> ERROR: No response received!")
-            return {
+            empty_result = {
                 "intent": None,
                 "context": context,
                 "prompt": prompt,
@@ -282,13 +301,15 @@ class LLMManager:
                 "model": result_model,
                 "metadata": metadata,
             }
+            self._save_to_cache(bug, provider, model, empty_result)
+            return empty_result
 
         log(f"  --> Response: ({len(text)} chars)")
 
         parser = IntentParser()
         intent = parser.parse(text)
 
-        return {
+        final_result = {
             "intent": intent,
             "context": context,
             "prompt": prompt,
@@ -297,6 +318,77 @@ class LLMManager:
             "model": result_model,
             "metadata": metadata,
         }
+
+        self._save_to_cache(bug, provider, model, final_result)
+        return final_result
+
+    def _get_cache_path(
+        self,
+        bug: dict[str, Any],
+        provider: str,
+        model: str,
+    ) -> Path | None:
+        """Get cache path for this bug and LLM combo."""
+        if not self.patch_cache_dir:
+            return None
+
+        repo_name = bug.get("repo_name", "unknown_repo")
+        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+
+        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+
+        repo_cache_dir = self.patch_cache_dir / safe_repo_name
+        repo_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_model = model.replace("/", "_").replace(":", "_")
+        cache_filename = f"{commit_sha[:12]}_{provider}_{safe_model}.json"
+
+        return repo_cache_dir / cache_filename
+
+    def _load_from_cache(
+        self,
+        bug: dict[str, Any],
+        provider: str,
+        model: str,
+    ) -> dict[str, Any] | None:
+        """Load LLM result from cache if it exists."""
+        cache_path = self._get_cache_path(bug, provider, model)
+
+        if not cache_path or not cache_path.exists():
+            return None
+
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+
+            required_keys = {"intent", "provider", "model"}
+            if not all(key in cached for key in required_keys):
+                log("  --> WARNING: Patch cache invalid")
+                return None
+
+            return cached
+
+        except Exception as e:
+            log(f"  --> WARNING: Failed to load patch cache: {e}")
+            return None
+
+    def _save_to_cache(
+        self,
+        bug: dict[str, Any],
+        provider: str,
+        model: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Save LLM result to cache."""
+        cache_path = self._get_cache_path(bug, provider, model)
+
+        if not cache_path:
+            return
+
+        try:
+            cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            log(f"  --> Patch cached to: {cache_path}")
+        except Exception as e:
+            log(f"  --> WARNING: Failed to save patch cache: {e}")
 
     def _build_prompt(
         self,

@@ -1,4 +1,6 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 import threading
@@ -36,11 +38,20 @@ class AnalysisPipeline:
         results_path = self.project_root / "results" / "results.csv"
         self.results_logger = ResultsLogger(results_path)
         self.debug_helper = DebugHelper(self.project_root)
+
+        self.context_cache_dir = project_root / "results" / "context_cache"
+        self.context_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        self.patch_cache_dir = project_root / "results" / "patches"
+        self.patch_cache_dir.mkdir(parents=True, exist_ok=True)
+
         self.patch_evaluator = PatchEvaluator(
             test_command=self.test_command,
             config=self.config,
             debug_helper=self.debug_helper,
             project_root=self.project_root,
+            context_cache_dir=self.context_cache_dir,
+            patch_cache_dir=self.patch_cache_dir,
         )
 
     @classmethod

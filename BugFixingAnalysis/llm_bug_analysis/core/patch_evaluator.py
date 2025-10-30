@@ -18,12 +18,16 @@ class PatchEvaluator:
         config: dict[str, Any],
         debug_helper: DebugHelper,
         project_root: Path,
+        context_cache_dir: Path | None = None,
+        patch_cache_dir: Path | None = None,
     ):
         self.test_command = test_command
         self.config = config
         self.debug_helper = debug_helper
         self.project_root = Path(project_root)
-        self.llm_manager = LLMManager(self.project_root)
+        self.context_cache_dir = context_cache_dir
+        self.patch_cache_dir = patch_cache_dir
+        self.llm_manager = LLMManager(project_root, context_cache_dir, patch_cache_dir)
 
     def evaluate_ai_fix(
         self,
