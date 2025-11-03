@@ -36,34 +36,46 @@ class PatchEvaluator:
         parent_sha: str,
         changed_files: list,
         debug_mode: bool,
+        llm_fix: dict[str, Any] | None = None,  # optional for pregenerated result
+        context_text: str | None = None,  # optional prebuilt context TODO: both??
         llm_provider: str = "gemini",
         llm_model: str = "gemini-2.5-flash",
     ) -> dict[str, Any]:
-        """Generate and evaluate the AI-generated fix using AAG/RAG."""
+        """Generate and evaluate the AI fix (or use pre-generated)"""
         log("  Evaluating AI Fix with AAG/RAG...")
 
         # start at buggy state
         handler.checkout(parent_sha)
 
-        if "changed_files" not in bug or not bug["changed_files"]:
-            bug["changed_files"] = changed_files
-            log(f"  --> Added changed files: {changed_files}")
+        if llm_fix is None:
+            if context_text is None:
+                from core.context_builder import ContextBuilder
 
-        log(f"  --> Analyzing: {bug['changed_files']}")
+                builder = ContextBuilder(
+                    repo_path=handler.repo_path,
+                    max_snippets=5,
+                    debug=True,
+                    cache_dir=self.context_cache_dir,
+                )
 
-        # generate fix
-        fix = self.llm_manager.generate_fix_with_intent(
-            bug,
-            handler.repo_path,
-            provider=llm_provider,
-            model=llm_model,
-        )
+                if "changed_files" not in bug:
+                    bug["changed_files"] = changed_files
 
-        if not fix or not fix.get("intent"):
+                # TODO: do I need this context here?
+                context, context_text = builder.build_and_format(bug)
+                log(f"  --> Added changed files: {changed_files}")
+
+                # generate fix
+                llm_fix = self.llm_manager.generate_fix(
+                    bug, context_text, llm_provider, llm_model
+                )
+
+        # TODO: validate LLM results, here or somewhere else?
+        if not llm_fix or not llm_fix.get("intent"):
             log("  --> ERROR: Failed to get valid fix from LLM.")
             return self._failed_results("INTENT_PARSE_FAILED")
 
-        intent = fix["intent"]
+        intent = llm_fix["intent"]
         log(f"  --> Fix Analysis: {intent.get('analysis', 'N/A')}")
         log(f"  --> Fix Type: {intent.get('fix_type', 'N/A')}")
         log(
@@ -84,23 +96,19 @@ class PatchEvaluator:
         log(f"  --> Patch: +{stats['lines_added']}/-{stats['lines_deleted']} lines")
 
         metadata = {
-            "provider": fix.get("provider", "unknown"),
-            "model": fix.get("model", "unknown"),
-            "prompt_tokens": fix.get("metadata", {}).get("prompt_tokens", 0),
-            "completion_tokens": fix.get("metadata", {}).get("completion_tokens", 0),
-            "thinking_tokens": fix.get("metadata", {}).get("thinking_tokens", 0),
-            "total_tokens": fix.get("metadata", {}).get("total_tokens", 0),
+            "provider": llm_fix.get("provider", "unknown"),
+            "model": llm_fix.get("model", "unknown"),
+            "prompt_tokens": llm_fix.get("metadata", {}).get("prompt_tokens", 0),
+            "completion_tokens": llm_fix.get("metadata", {}).get(
+                "completion_tokens", 0
+            ),
+            "thinking_tokens": llm_fix.get("metadata", {}).get("thinking_tokens", 0),
+            "total_tokens": llm_fix.get("metadata", {}).get("total_tokens", 0),
         }
 
         # apply and test the patch
         result = self._test_ai_patch(
-            patch,
-            stats,
-            handler,
-            parent_sha,
-            changed_files,
-            bug,
-            debug_mode,
+            patch, stats, handler, parent_sha, changed_files, bug, debug_mode
         )
 
         result["llm_metadata"] = metadata

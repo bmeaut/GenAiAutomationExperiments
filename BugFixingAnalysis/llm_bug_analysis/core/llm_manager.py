@@ -260,29 +260,22 @@ class LLMManager:
         if patch_cache_dir:
             patch_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate_fix_with_intent(
+    def generate_fix(
         self,
         bug: dict[str, Any],
-        repo_path: Path,
+        context_text: str,
         provider: str = "gemini",
         model: str = "gemini-2.5-flash",
     ) -> dict[str, Any]:
-        """Generate fix using TODO:."""
+        """Generate fix from prebuilt context."""
 
         cached_result = self._load_from_cache(bug, provider, model)
         if cached_result is not None:
             log("  --> Loaded result from cache")
             return cached_result
 
-        builder = ContextBuilder(
-            repo_path=repo_path,
-            max_snippets=5,
-            debug=True,
-            cache_dir=self.context_cache_dir,
-        )
-        context, context_text = builder.build_and_format(bug)
-
         prompt = self._build_prompt(bug, context_text)
+
         handler = self._create_response_handler(provider, model)
         result = handler.get_response(prompt)
 
@@ -294,7 +287,6 @@ class LLMManager:
             log("  --> ERROR: No response received!")
             empty_result = {
                 "intent": None,
-                "context": context,
                 "prompt": prompt,
                 "raw_response": "",
                 "provider": provider,
@@ -311,13 +303,15 @@ class LLMManager:
 
         final_result = {
             "intent": intent,
-            "context": context,
             "prompt": prompt,
             "raw_response": text,
             "provider": provider,
             "model": result_model,
             "metadata": metadata,
         }
+        # TODO: add back context later to save into results,
+        # or should it be save where it is created, so I don't
+        # pass it along everywhere?
 
         self._save_to_cache(bug, provider, model, final_result)
         return final_result

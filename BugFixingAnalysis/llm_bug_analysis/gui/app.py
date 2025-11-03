@@ -482,7 +482,6 @@ class BugAnalysisGUI(tk.Frame):
     def _clear_context_cache(self):
         """Clear all cached contexts."""
         import shutil
-        from pathlib import Path
 
         # TODO: check which function is responsible for which cache
         cache_dir = Path("cache/contexts")
@@ -535,7 +534,6 @@ class BugAnalysisGUI(tk.Frame):
         # try to build context with detailed logging
         from core.project_handler import ProjectHandler
         from core.context_builder import ContextBuilder
-        from pathlib import Path
 
         handler = ProjectHandler(repo_name)
         handler.setup()
@@ -690,8 +688,6 @@ class BugAnalysisGUI(tk.Frame):
 
     def _save_test_result(self, result_type, data):
         """Save test result to file for inspection."""
-        import json
-        from pathlib import Path
 
         if not data:
             log(f"WARNING: No {result_type} data to save")
@@ -713,8 +709,6 @@ class BugAnalysisGUI(tk.Frame):
 
     def _load_test_context(self, repo_name, bug_sha):
         """Load context from test file or stage1 cache."""
-        import json
-        from pathlib import Path
 
         # TODO: test_single and stage1 or stage2 both still needed?
         test_file = Path("results") / "test_single_context.json"
@@ -742,8 +736,6 @@ class BugAnalysisGUI(tk.Frame):
 
     def _load_test_patch(self, repo_name, bug_sha):
         """Load patch from test file or stage2 cache."""
-        import json
-        from pathlib import Path
 
         test_file = Path("results") / "test_single_patch.json"
         if test_file.exists():
