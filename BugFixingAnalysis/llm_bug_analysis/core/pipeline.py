@@ -1,9 +1,11 @@
 import json
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any, Callable
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
-from pathlib import Path
-from typing import Any
-import threading
 
 from .project_handler import ProjectHandler
 from .analysis import analyze_files
@@ -11,6 +13,11 @@ from .logger import log
 from .results_logger import ResultsLogger
 from .debug_helper import DebugHelper
 from .patch_evaluator import PatchEvaluator
+from .git_operations import GitOperations
+from .context_builder import ContextBuilder
+
+# TODO: add % preview to status bar
+ProgressCallback = Callable[[int, int, str], None]  # current, total, message
 
 
 class AnalysisPipeline:
@@ -34,6 +41,8 @@ class AnalysisPipeline:
         self.llm_model = llm_model
 
         self.test_command = config.get("test_command", "pytest")
+
+        self.max_parallel_llm = config.get("max_parallel_llm", 5)
 
         results_path = self.project_root / "results" / "results.csv"
         self.results_logger = ResultsLogger(results_path)
@@ -82,38 +91,6 @@ class AnalysisPipeline:
             llm_model=llm_model,
         )
 
-    def run_corpus(
-        self,
-        corpus: list[dict[str, Any]],
-        resume_event: threading.Event | None = None,
-        stop_event: threading.Event | None = None,
-    ):
-        """Run analysis on entire corpus (grouped by repo)."""
-        if resume_event is None:
-            resume_event = threading.Event()
-            resume_event.set()
-        if stop_event is None:
-            stop_event = threading.Event()
-
-        bugs_by_repo = self._group_by_repo(corpus)
-
-        for repo_name, bugs in bugs_by_repo.items():
-            if stop_event.is_set():
-                log("--> Stopped.")
-                break
-
-            self._process_repository(repo_name, bugs, resume_event, stop_event)
-
-    def run_single_bug(
-        self,
-        bug_data: dict[str, Any],
-        resume_event: threading.Event | None = None,
-        stop_event: threading.Event | None = None,
-    ):
-        """Run analysis for single commit."""
-        log("--- Running analysis for single commit ---")
-        self.run_corpus([bug_data], resume_event, stop_event)
-
     def _group_by_repo(self, corpus: list[dict[str, Any]]) -> dict[str, list]:
         """Group bugs by repository name."""
         grouped: dict[str, list] = {}
@@ -124,87 +101,496 @@ class AnalysisPipeline:
             grouped[repo].append(bug)
         return grouped
 
-    def _process_repository(
+    def run_stage_1_build_contexts(
+        self,
+        corpus: list[dict[str, Any]],
+        stop_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Build contexts for all bugs."""
+        log("\n" + "=" * 60)
+        log("STAGE 1: Building contexts...")
+        log("=" * 60)
+
+        if stop_event is None:
+            stop_event = threading.Event()
+
+        bugs_by_repo = self._group_by_repo(corpus)
+        total_bugs = len(corpus)
+        processed_bugs = 0
+
+        all_contexts = {}
+
+        for repo_idx, (repo_name, bugs) in enumerate(bugs_by_repo.items(), 1):
+            if stop_event.is_set():
+                log("\nWARNING: Stage 1 stopped.")
+                break
+
+            log(
+                f"\n[Repo {repo_idx}/{len(bugs_by_repo)}] {repo_name} ({len(bugs)} bugs)"
+            )
+
+            try:
+                repo_contexts = self._build_contexts_for_repo(
+                    repo_name,
+                    bugs,
+                    stop_event,
+                    lambda curr, total, msg: (
+                        progress_callback(processed_bugs + curr, total_bugs, msg)
+                        if progress_callback
+                        else None
+                    ),
+                )
+
+                all_contexts.update(repo_contexts)
+                processed_bugs += len(bugs)
+
+            except Exception as e:
+                log(f"ERROR: in processing {repo_name}: {e}")
+                processed_bugs += len(bugs)
+
+        log(
+            f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
+        )
+
+        cache_file = self.project_root / "results" / "stage1_contexts.json"
+        try:
+            cache_file.write_text(json.dumps(all_contexts, indent=2, default=str))
+            log(f"Contexts saved to {cache_file}")
+        except Exception as e:
+            log(f"ERROR: Failed to save contexts: {e}")
+
+        return all_contexts
+
+    def _build_contexts_for_repo(
         self,
         repo_name: str,
         bugs: list[dict[str, Any]],
-        resume_event: threading.Event,
         stop_event: threading.Event,
-    ):
-        """Process all bugs in a repo (setup once, analyze many)."""
-        log(f"\n{'='*60}")
-        log(f"Repository: {repo_name}")
-        log(f"{'='*60}")
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Build contexts for all bugs in ONE repo."""
+        contexts = {}
 
-        handler = ProjectHandler(repo_name)
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"ctx_{repo_name.replace('/', '_')}_"))
+
         try:
+            handler = ProjectHandler(repo_name)
+            handler.repo_path = temp_dir
+            handler.git_ops = GitOperations(repo_name, temp_dir)
+
+            log(f"  Cloning {repo_name}...")
             handler.setup()
-            if not handler.setup_virtual_environment():
-                log(f"  --> CRITICAL: venv setup failed - skipping repo")
-                return
+            log(f"  Cloned to {temp_dir}")
 
-            for bug in bugs:
-                if not resume_event.is_set():
-                    log("--> Paused - waiting...")
-                    resume_event.wait()
-                    log("--> Resumed.")
-
+            total = len(bugs)
+            for i, bug in enumerate(bugs, 1):
                 if stop_event.is_set():
-                    log("--> Stopped.")
                     break
 
-                self._process_bug(bug, handler)
+                bug_sha = bug.get("bug_commit_sha", "unknown")
+                parent_sha = bug.get("parent_commit_sha", "unknown")
+                bug_key = f"{repo_name}_{bug_sha[:12]}"
+
+                if progress_callback:
+                    progress_callback(i, total, f"Building context: {bug_key}")
+
+                log(f"  [{i}/{total}] {bug_sha[:7]}")
+
+                try:
+                    changed_files = handler.get_changed_files(bug_sha)
+                    if not changed_files:
+                        log(f" No Python files changed.")
+                        continue
+
+                    handler.checkout(parent_sha)
+
+                    builder = ContextBuilder(
+                        repo_path=handler.repo_path,
+                        max_snippets=5,
+                        debug=True,
+                        cache_dir=self.context_cache_dir,
+                    )
+
+                    bug_with_files = {**bug, "changed_files": changed_files}
+                    context, context_text = builder.build_and_format(bug_with_files)
+
+                    contexts[bug_key] = {
+                        "bug": bug,
+                        "context": context,  # TODO: should it keep context or just keep full prompt?
+                        "formatted_context": context_text,
+                        "changed_files": changed_files,
+                    }
+
+                    log(f"    Context built ({len(context_text)} chars)")
+
+                except Exception as e:
+                    log(f"    FAIL: {e}")
+
+        finally:
+            log(f"  Cleaning up {temp_dir}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        return contexts
+
+    def run_stage_2_generate_patches(
+        self,
+        contexts: dict[str, dict[str, Any]] | None = None,
+        mode: str = "parallel",  # "sequential" or "parallel"
+        stop_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Generate patches from contexts via LLM."""
+        log("\n" + "=" * 60)
+        log(f"STAGE 2: Generating patches ({mode.upper()})")
+        log("=" * 60)
+
+        # TODO: haven't used skip for a while, remove later
+        if self.skip_llm_fix:
+            log("WARNING: Skipping LLM generation...")
+            return {}
+
+        if stop_event is None:
+            stop_event = threading.Event()
+
+        if contexts is None:
+            cache_file = self.project_root / "results" / "stage1_contexts.json"
+            if not cache_file.exists():
+                log("ERROR: No contexts found!")
+                log("Run stage 1 to build contexts.")
+                return {}
+
+            try:
+                contexts = json.loads(cache_file.read_text())
+                if not isinstance(contexts, dict):
+                    log("ERROR: Invalid contexts format")
+                    return {}
+                log(f"Loaded {len(contexts)} contexts from cache")
+            except Exception as e:
+                log(f"ERROR: Failed to load contexts: {e}")
+                return {}
+
+        else:
+            if not isinstance(contexts, dict):
+                log("ERROR: Invalid contexts format")
+                return {}
+
+        if mode == "sequential":
+            patches = self._generate_patches_sequential(
+                contexts, stop_event, progress_callback
+            )
+        elif mode == "parallel":
+            patches = self._generate_patches_parallel(
+                contexts, stop_event, progress_callback
+            )
+        else:
+            log(f"ERROR: Unknown mode '{mode}'. Use 'sequential' or 'parallel'.")
+            return {}
+
+        log(
+            f"\nSUCCESS: Stage 2 complete: {len(patches)}/{len(contexts)} patches generated"
+        )
+
+        cache_file = self.project_root / "results" / "stage2_patches.json"
+        try:
+            cache_file.write_text(json.dumps(patches, indent=2, default=str))
+            log(f"Patches saved to {cache_file}")
+        except Exception as e:
+            log(f"ERROR: Failed to save patches: {e}")
+
+        return patches
+
+    def _generate_patches_sequential(
+        self,
+        contexts: dict[str, dict[str, Any]],
+        stop_event: threading.Event,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Generate patches one by one."""
+        patches = {}
+        total = len(contexts)
+
+        for i, (bug_key, context_data) in enumerate(contexts.items(), 1):
+            if stop_event.is_set():
+                log("\nWARNING:  Stage 2 stopped by user")
+                break
+
+            if progress_callback:
+                progress_callback(i, total, f"Generating patch: {bug_key}")
+
+            log(f"  [{i}/{total}] {bug_key}")
+
+            try:
+                result = self._generate_single_patch(bug_key, context_data)
+                patches[bug_key] = result
+                log(f"    Patch generated")
+
+            except Exception as e:
+                log(f"    FAILED: {e}")
+                patches[bug_key] = {
+                    "bug": context_data.get("bug"),
+                    "error": str(e),
+                    "llm_result": None,
+                }
+
+        return patches
+
+    def _generate_patches_parallel(
+        self,
+        contexts: dict[str, dict[str, Any]],
+        stop_event: threading.Event,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Generate patches in parallel."""
+        patches = {}
+        total = len(contexts)
+        completed = 0
+
+        log(f"Using {self.max_parallel_llm} parallel workers")
+
+        with ThreadPoolExecutor(max_workers=self.max_parallel_llm) as executor:
+            futures = {
+                executor.submit(
+                    self._generate_single_patch, bug_key, context_data
+                ): bug_key
+                for bug_key, context_data in contexts.items()
+                if not stop_event.is_set()
+            }
+
+            for future in as_completed(futures):
+                if stop_event.is_set():
+                    log("\nWARNING:  Stage 2 stopped by user")
+                    break
+
+                bug_key = futures[future]
+                completed += 1
+
+                if progress_callback:
+                    progress_callback(completed, total, f"Generated: {bug_key}")
+
+                try:
+                    result = future.result()
+                    patches[bug_key] = result
+                    log(f"  [{completed}/{total}] - {bug_key}")
+
+                except Exception as e:
+                    log(f"  [{completed}/{total}] FAILED: {bug_key}: {e}")
+                    context_data = contexts.get(bug_key, {})
+                    patches[bug_key] = {
+                        "bug": context_data.get("bug"),
+                        "error": str(e),
+                        "llm_result": None,
+                    }
+
+        return patches
+
+    def _generate_single_patch(
+        self,
+        bug_key: str,
+        context_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate a single patch from pre-built context."""
+        bug = context_data["bug"]
+        formatted_context = context_data["formatted_context"]
+        changed_files = context_data.get("changed_files", [])
+
+        llm_result = self.patch_evaluator.llm_manager.generate_fix(
+            bug=bug,
+            context_text=formatted_context,
+            provider=self.llm_provider,
+            model=self.llm_model,
+        )
+
+        return {
+            "bug": bug,
+            "llm_result": llm_result,
+            "changed_files": changed_files,
+        }
+
+    def run_stage_3_test_patches(
+        self,
+        patches: dict[str, dict[str, Any]] | None = None,
+        resume_event: threading.Event | None = None,
+        stop_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
+        """Test all patches."""
+        log("\n" + "=" * 60)
+        log("STAGE 3: Testing patches...")
+        log("=" * 60)
+
+        if resume_event is None:
+            resume_event = threading.Event()
+            resume_event.set()
+        if stop_event is None:
+            stop_event = threading.Event()
+
+        # load patches if not provided
+        if patches is None:
+            cache_file = self.project_root / "results" / "stage2_patches.json"
+            if not cache_file.exists():
+                log("ERROR: No patches found!")
+                log("   Run Stage 2 to generate patches.")
+                return
+
+            try:
+                patches = json.loads(cache_file.read_text())
+                if not isinstance(patches, dict):
+                    log("ERROR: Invalid patches format")
+                    return
+                log(f"Loaded {len(patches)} patches from cache")
+            except Exception as e:
+                log(f"ERROR: Failed to load patches: {e}")
+                return
+
+        else:
+            if not isinstance(patches, dict):
+                log("ERROR: Invalid patches format")
+                return
+
+        patches_by_repo = self._group_patches_by_repo(patches)
+
+        total_repos = len(patches_by_repo)
+        total_patches = len(patches)
+        processed_patches = 0
+
+        for repo_idx, (repo_name, repo_patches) in enumerate(
+            patches_by_repo.items(), 1
+        ):
+            if stop_event.is_set():
+                log("\nWARNING: Stage 3 stopped.")
+                break
+
+            log(
+                f"\n[Repo {repo_idx}/{total_repos}] {repo_name} ({len(repo_patches)} patches)"
+            )
+
+            try:
+                self._test_patches_for_repo(
+                    repo_name,
+                    repo_patches,
+                    resume_event,
+                    stop_event,
+                    lambda curr, total, msg: (
+                        progress_callback(processed_patches + curr, total_patches, msg)
+                        if progress_callback
+                        else None
+                    ),
+                )
+                processed_patches += len(repo_patches)
+
+            except Exception as e:
+                log(f"ERROR: {e}")
+                processed_patches += len(repo_patches)
+
+        log(f"\nSUCCESS: Stage 3 complete: {processed_patches} patches tested")
+
+    def _group_patches_by_repo(
+        self,
+        patches: dict[str, dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Group patches by repository name."""
+        grouped = defaultdict(list)
+
+        for bug_key, patch_data in patches.items():
+            bug = patch_data.get("bug")
+            if not bug:
+                continue
+
+            repo_name = bug.get("repo_name", "unknown")
+            grouped[repo_name].append(patch_data)
+
+        return dict(grouped)
+
+    def _test_patches_for_repo(
+        self,
+        repo_name: str,
+        repo_patches: list[dict[str, Any]],
+        resume_event: threading.Event,
+        stop_event: threading.Event,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
+        """Test all patches for one repository."""
+        handler = ProjectHandler(repo_name)
+
+        try:
+            log(f"  Cloning {repo_name}...")
+            handler.setup()
+
+            log(f"Building virtual environment...")
+            if not handler.setup_virtual_environment():
+                log(f"ERROR: venv setup failed - skipping {repo_name}")
+                return
+
+            log(f"Environment ready, testing {len(repo_patches)} patches")
+
+            total = len(repo_patches)
+            for i, patch_data in enumerate(repo_patches, 1):
+                if stop_event.is_set():
+                    break
+
+                if not resume_event.is_set():
+                    log("Paused - waiting...")
+                    resume_event.wait()
+                    log("Resumed")
+
+                bug = patch_data.get("bug")
+                if not bug:
+                    continue
+
+                bug_sha = bug.get("bug_commit_sha", "unknown")
+
+                if progress_callback:
+                    progress_callback(i, total, f"Testing: {repo_name}_{bug_sha[:7]}")
+
+                log(f"\n  [{i}/{total}] {bug_sha[:7]}")
+
+                self._test_single_patch(patch_data, handler)
 
         except Exception as e:
-            log(f"  FATAL ERROR in {repo_name}: {e}")
+            log(f"ERROR: in {repo_name}: {e}")
+
         finally:
             handler.cleanup()
 
-    def _process_bug(
+    def _test_single_patch(
         self,
-        bug: dict[str, Any],
+        patch_data: dict[str, Any],
         handler: ProjectHandler,
-    ):
-        """Analyze single bug commit - before/after complexity, AI vs human fix."""
+    ) -> None:
+        """Test a single pre-generated patch."""
+        bug = patch_data["bug"]
+        llm_result = patch_data.get("llm_result")
+        changed_files = patch_data.get("changed_files", [])
+
         fix_sha = bug["bug_commit_sha"]
         parent_sha = bug["parent_commit_sha"]
-
-        log(f"\n{'─'*60}")
-        log(f"Commit: {fix_sha[:7]}")
-        log(f"{'─'*60}")
 
         try:
             results = {**bug}
 
-            changed = handler.get_changed_files(fix_sha)
-            if not changed:
-                log("  --> Skipping: No Python files changed.")
-                return
-
-            before = self._analyze_before(handler, parent_sha, changed)
+            before = self._analyze_before(handler, parent_sha, changed_files)
             results["comp_before"] = before
 
-            # AI fix
-            if not self.skip_llm_fix:
+            if llm_result and not patch_data.get("error"):
                 ai = self.patch_evaluator.evaluate_ai_fix(
-                    bug,
-                    handler,
-                    parent_sha,
-                    changed,
-                    self.debug_on_failure,
-                    llm_provider=self.llm_provider,
-                    llm_model=self.llm_model,
+                    bug=bug,
+                    handler=handler,
+                    parent_sha=parent_sha,
+                    changed_files=changed_files,
+                    debug_mode=self.debug_on_failure,
+                    llm_fix=llm_result,  # pregenerated
+                    context_text=None,
                 )
                 results["ai_results"] = ai
             else:
-                log("  --> Skipping AI fix as requested.")
+                log(f"ERROR: Skipping AI (generation failed)")
                 results["ai_results"] = self._skipped_results()
 
-            # human fix
             human = self.patch_evaluator.evaluate_human_fix(
                 handler,
                 fix_sha,
-                changed,
+                changed_files,
                 bug,
             )
             results["human_results"] = human
@@ -213,7 +599,46 @@ class AnalysisPipeline:
             self.results_logger.log(results)
 
         except Exception as e:
-            log(f"  FATAL ERROR in {fix_sha[:7]}: {e}")
+            log(f"ERROR: {e}")
+
+    def run_full_pipeline(
+        self,
+        corpus: list[dict[str, Any]],
+        threaded_mode: str = "parallel",
+        resume_event: threading.Event | None = None,
+        stop_event: threading.Event | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
+        """Run complete 3-stage pipeline"""
+        log("\n" + "=" * 60)
+        log(f"Starting 3-stage pipeline: {len(corpus)} bugs")
+        log(f"   LLM Mode: {threaded_mode.upper()}")
+        log("=" * 60)
+
+        log("\nStage 1/3: Building contexts...")
+        contexts = self.run_stage_1_build_contexts(
+            corpus, stop_event, progress_callback
+        )
+        if stop_event and stop_event.is_set():
+            log("Pipeline stopped after Stage 1")
+            return
+
+        log("\nStage 2/3: Generating patches...")
+        patches = self.run_stage_2_generate_patches(
+            contexts, threaded_mode, stop_event, progress_callback
+        )
+        if stop_event and stop_event.is_set():
+            log("Pipeline stopped after Stage 2")
+            return
+
+        log("\nStage 3/3: Testing patches...")
+        self.run_stage_3_test_patches(
+            patches, resume_event, stop_event, progress_callback
+        )
+
+        log("\n" + "=" * 60)
+        log("SUCCESS: Pipeline complete")
+        log("=" * 60)
 
     def _analyze_before(
         self,
