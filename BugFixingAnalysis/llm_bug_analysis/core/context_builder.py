@@ -43,19 +43,52 @@ class ContextBuilder:
             log("  --> Using cached context.")
             return cached_context
 
+        # debugging
+        changed_files = bug.get("changed_files", [])
+
+        if not changed_files:
+            log("  --> WARNING: No changed_files provided!")
+            return self._empty_context()
+
+        log(f"  --> Changed files to analyze: {changed_files}")
+
+        # check if files exist
+        existing_files = []
+        for file_path in changed_files:
+            full_path = Path(self.aag_builder.repo_path) / file_path
+            if full_path.exists():
+                log(f"      {file_path} exists")
+                existing_files.append(file_path)
+            else:
+                log(f"      {file_path} MISSING at current commit")
+
+        if not existing_files:
+            log("  --> WARNING: No changed files at parent commit (all newly added?)")
+            return self._empty_context()
+        # debugging
+
         log("  --> Building syntax graph...")
-        aag_context = self.aag_builder.build_syntax_graph(bug.get("changed_files", []))
+        aag_context = self.aag_builder.build_syntax_graph(existing_files)
+        log(
+            f"      Found {len(aag_context.get('classes', {}))} classes, {len(aag_context.get('functions', {}))} functions"
+        )
 
         log("  --> Finding relevant code snippets...")
-        rag_context = self.rag_retriever.get_snippets(bug)
+        bug_with_existing = {**bug, "changed_files": existing_files}
+        rag_context = self.rag_retriever.get_snippets(bug_with_existing)
+        log(f"      Found {len(rag_context.get('snippets', []))} snippets")
 
         log("  --> Analyzing code structure...")
-        structural_info = self.structural_analyzer.analyze_structure(
-            bug.get("changed_files", [])
+        structural_info = self.structural_analyzer.analyze_structure(existing_files)
+        log(
+            f"      Found {len(structural_info.get('class_hierarchy', {}))} classes in hierarchy"
         )
 
         log("  --> Checking git history...")
-        historical_info = self.historical_analyzer.analyze_history(bug)
+        historical_info = self.historical_analyzer.analyze_history(bug_with_existing)
+        log(
+            f"      Found {len(historical_info.get('recent_changes', []))} recent changes, {len(historical_info.get('related_commits', []))} related commits"
+        )
 
         context = {
             "aag": aag_context,
@@ -66,6 +99,20 @@ class ContextBuilder:
 
         self._save_to_cache(bug, context)
         return context
+
+    def _empty_context(self) -> dict[str, Any]:
+        """Return empty context structure."""
+        return {
+            "aag": {
+                "classes": {},
+                "functions": {},
+                "dependencies": [],
+                "call_graph": [],
+            },
+            "rag": {"snippets": [], "relevance_scores": []},
+            "structural": {"class_hierarchy": {}, "method_signatures": {}},
+            "historical": {"recent_changes": [], "related_commits": []},
+        }
 
     def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
         """Get cache file path for this bug."""
@@ -153,8 +200,43 @@ class AAGBuilder:
         """Build graph for the changed files."""
         aag = {"classes": {}, "functions": {}, "dependencies": [], "call_graph": []}
 
+        log(
+            f"      AAG: Processing {len(changed_files)} files from {self.repo_path}"
+        )  # debug
+
         for file_path in changed_files:
+
+            # debugging
+            full_path = self.repo_path / file_path
+
+            if not full_path.exists():
+                log(f"      AAG: File missing: {file_path}")
+                continue
+
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                log(f"      AAG: {file_path} ({len(content)} bytes)")
+
+                if not content.strip():
+                    log(f"      AAG: WARNING: File is empty!")
+                    continue
+
+                if not file_path.endswith(".py"):
+                    log(f"      AAG: WARNING: Not a .py file")
+                    continue
+
+            except Exception as e:
+                log(f"      AAG: ERROR: Cannot read {file_path}: {e}")
+                continue
+            # debugging
+
             self._parse_file_structure(file_path, aag)
+
+        log(
+            f"      AAG: Result - {len(aag['classes'])} classes, {len(aag['functions'])} functions"
+        )  # debug
 
         return aag
 
@@ -167,22 +249,37 @@ class AAGBuilder:
 
         try:
             with open(full_path, "r", encoding="utf-8") as f:
-                content = f.read()
+                content = f.read()  # TODO: use path open?
+
+            log(f"      AAG: Parsing {file_path}...")  # debug
 
             tree = ast.parse(content, filename=file_path)
 
-        except Exception as e:
-            log(f"Warning: Could not parse {file_path}: {e}")
-            return
+            class_count = 0
+            func_count = 0
 
-        # go through the tree, looking for classes and functions
-        # TODO: have a few of these, restructure needed?
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                self._get_class(node, file_path, aag, tree)
-            elif isinstance(node, ast.FunctionDef):
-                if not self._is_inside_class(node, tree):
-                    self._get_function(node, file_path, aag)
+            # go through the tree, looking for classes and functions
+            # TODO: have a few of these, restructure needed?
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    class_count += 1
+                    self._get_class(node, file_path, aag, tree)
+                elif isinstance(node, ast.FunctionDef):
+                    if not self._is_inside_class(node, tree):
+                        func_count += 1
+                        self._get_function(node, file_path, aag)
+
+            log(
+                f"      AAG: Found {class_count} classes, {func_count} top-level functions"
+            )
+
+        except SyntaxError as e:
+            log(f"      AAG: Syntax error in {file_path}: {e}")
+        except Exception as e:
+            log(f"      AAG: Parse error in {file_path}: {e}")
+            import traceback
+
+            log(traceback.format_exc())
 
     def _get_class(
         self, node: ast.ClassDef, file_path: str, aag: dict[str, Any], tree: ast.Module
@@ -252,13 +349,23 @@ class RAGRetriever:
         """Find the most relevant code for this bug."""
 
         query = f"{bug.get('issue_title', '')} {bug.get('issue_body', '')}"
-
+        # debug
+        log(f"      RAG: Query length: {len(query)} chars")
+        if not query.strip():
+            log(f"      RAG: WARNING  Empty query - no issue title/body!")
+        # debug
         snippets = self._get_all_snippets(bug.get("changed_files", []))
 
+        log(f"      RAG: Extracted {len(snippets)} total snippets")  # debug
+
         if not snippets:
+            log(f"      RAG: WARNING No snippets found!")
             return {"snippets": [], "relevance_scores": []}
 
-        return self._rank_snippets(query, snippets)
+        result = self._rank_snippets(query, snippets)
+        log(f"      RAG: Ranked to {len(result.get('snippets', []))} snippets")
+
+        return result
 
     def _get_all_snippets(self, changed_files: list[str]) -> list[dict[str, Any]]:
         snippets = []
