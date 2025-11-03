@@ -40,6 +40,11 @@ class BugAnalysisGUI(tk.Frame):
         self.llm_provider = tk.StringVar(value="manual")
         self.llm_model = tk.StringVar(value="gemini-2.5-flash")
 
+        self.threaded_mode = tk.StringVar(value="parallel")
+        self.parallel_workers = tk.IntVar(value=5)
+
+        self.show_logs = tk.BooleanVar(value=False)
+
         self.resume_event = threading.Event()
         self.resume_event.set()
         self.stop_event = threading.Event()
@@ -70,14 +75,25 @@ class BugAnalysisGUI(tk.Frame):
 
     def _create_widgets(self):
         """Build all GUI components."""
-        self._build_repository_section()
-        self._setup_controls()
-        self._add_corpus_viewer()
-        self._create_log_viewer()
+
+        self.main_container = tk.Frame(self)
+        self.main_container.pack(fill="both", expand=True)
+
+        self.left_panel = tk.Frame(self.main_container, width=800)
+        self.left_panel.pack(side="left", fill="y", expand=False)
+        self.left_panel.pack_propagate(False)
+
+        self._build_repository_section(self.left_panel)
+        self._setup_controls(self.left_panel)
+        self._add_corpus_viewer(self.left_panel)
+
+        self.right_panel = tk.Frame(self.main_container)
+        self._create_log_viewer(self.right_panel)
+
         self._add_status_bar()
 
-    def _build_repository_section(self):
-        repo_frame = tk.LabelFrame(self, text="Target Repositories")
+    def _build_repository_section(self, parent):
+        repo_frame = tk.LabelFrame(parent, text="Target Repositories")
         repo_frame.pack(fill="x", expand=False, pady=5)
 
         self.repository_listbox = tk.Listbox(repo_frame)
@@ -85,15 +101,15 @@ class BugAnalysisGUI(tk.Frame):
 
         button_container = tk.Frame(repo_frame)
         tk.Button(button_container, text="Add", command=self._add_repository).pack(
-            fill="x"
+            fill="x", padx=5, pady=1
         )
         tk.Button(
             button_container, text="Remove", command=self._remove_repository
-        ).pack(fill="x")
+        ).pack(fill="x", padx=5, pady=1)
         button_container.pack(side="right", fill="y")
 
-    def _setup_controls(self):
-        controls = tk.LabelFrame(self, text="Controls")
+    def _setup_controls(self, parent):
+        controls = tk.LabelFrame(parent, text="Controls")
         controls.pack(fill="x", expand=False, pady=10)
 
         self._add_pause_stop(controls)
@@ -104,7 +120,7 @@ class BugAnalysisGUI(tk.Frame):
     def _add_pause_stop(self, parent):
         """Pause/resume/stop pipeline controls."""
         controls = tk.Frame(parent)
-        controls.pack(fill="x", padx=5, pady=5)
+        controls.pack(fill="x", padx=3, pady=5)
 
         self.pause_button = tk.Button(
             controls,
@@ -148,7 +164,41 @@ class BugAnalysisGUI(tk.Frame):
             variable=self.debug_mode_enabled,
         ).pack(side="left", padx=10)
 
+        tk.Checkbutton(
+            options,
+            text="Show Logs",
+            variable=self.show_logs,
+            command=self._toggle_log_panel,
+        ).pack(side="left", padx=10)
+
         tk.Button(options, text="Clear Log", command=self._clear_log).pack(side="right")
+
+    def _toggle_log_panel(self):
+        """Show/hide log viewer and resize window."""
+
+        window = self.winfo_toplevel()
+        if self.show_logs.get():
+
+            self.right_panel.pack(side="right", fill="both", expand=True)
+
+            # expand window width (double it)
+            window.update_idletasks()
+            current_width = window.winfo_width()
+            current_height = window.winfo_height()
+
+            if current_width < 1200:
+                new_width = current_width * 2
+                window.geometry(f"{new_width}x{current_height}")
+        else:
+            # hide logs and shrink window back
+            self.right_panel.pack_forget()
+            window.update_idletasks()
+            current_width = window.winfo_width()
+            current_height = window.winfo_height()
+
+            if current_width > 1000:
+                new_width = current_width // 2
+                window.geometry(f"{new_width}x{current_height}")
 
     def _add_llm_dropdown(self, parent):
         """Dropdown for models and manual mode."""
@@ -178,6 +228,10 @@ class BugAnalysisGUI(tk.Frame):
         )
         self.model_dropdown.pack(side="left", padx=5)
 
+        tk.Label(llm_container, text="TODO: make GUI pretty!!").pack(
+            side="left", padx=5
+        )
+
         # init dropdown state
         self._on_llm_provider_changed(None)
 
@@ -187,19 +241,189 @@ class BugAnalysisGUI(tk.Frame):
 
         tk.Button(
             self.action_buttons,
-            text="1. Build Bug Corpus",
+            text="0. Build Bug Corpus",
             command=self._build_bug_corpus,
-        ).pack(fill="x")
+        ).pack(fill="x", padx=5)
+
+        # threaded mode selection
+        threaded_mode_frame = tk.Frame(self.action_buttons)
+        threaded_mode_frame.pack(fill="x", pady=2)
+        tk.Label(threaded_mode_frame, text="Threaded mode:").pack(side="left")
+        tk.Radiobutton(
+            threaded_mode_frame,
+            text="Sequential",
+            variable=self.threaded_mode,
+            value="sequential",
+        ).pack(side="left", padx=5)
+        tk.Radiobutton(
+            threaded_mode_frame,
+            text="Parallel",
+            variable=self.threaded_mode,
+            value="parallel",
+        ).pack(side="left", padx=5)
+        tk.Label(threaded_mode_frame, text="Workers:").pack(side="left", padx=(10, 0))
+        tk.Spinbox(
+            threaded_mode_frame,
+            from_=1,
+            to=10,
+            textvariable=self.parallel_workers,
+            width=5,
+        ).pack(side="left")
+
+        # stage buttons
+        stage_buttons_frame = tk.Frame(self.action_buttons)
+        stage_buttons_frame.pack(fill="x", pady=2)
 
         tk.Button(
-            self.action_buttons,
-            text="2. Run Analysis Pipeline",
-            command=self._run_all_bugs,
-        ).pack(fill="x")
+            stage_buttons_frame,
+            text="Stage 1: Build Contexts",
+            command=self._run_stage_1,
+        ).pack(side="left", fill="x", expand=True, padx=(5, 1))
 
-    def _add_corpus_viewer(self):
+        tk.Button(
+            stage_buttons_frame,
+            text="Stage 2: Generate Patches",
+            command=self._run_stage_2,
+        ).pack(side="left", fill="x", expand=True, padx=1)
+
+        tk.Button(
+            stage_buttons_frame,
+            text="Stage 3: Test Patches",
+            command=self._run_stage_3,
+        ).pack(side="left", fill="x", expand=True, padx=(1, 0))
+
+        tk.Button(
+            stage_buttons_frame,
+            text="Run Full Pipeline",
+            command=self._run_full_pipeline,
+            bg="#4CAF50",
+            fg="white",
+        ).pack(fill="x", padx=(1, 5))
+
+    def _run_stage(self, stage_num: int):
+        """Run a single pipeline stage."""
+        if not self._validate_corpus_ready():
+            return
+
+        stage_config = {
+            1: {
+                "name": "Build Contexts",
+                "status": "Busy: Stage 1 - Building contexts...",
+                "prereq_file": None,
+                "prereq_message": None,
+                "runner": lambda p: p.run_stage_1_build_contexts(
+                    self.bug_corpus,
+                    self.stop_event,
+                ),
+            },
+            2: {
+                "name": "Generate Patches",
+                "status": f"Busy: Stage 2 - Generating patches ({self.threaded_mode.get()})...",
+                "prereq_file": self.project_root / "results" / "stage1_contexts.json",
+                "prereq_message": "No context found!\n\nRun Stage 1 to build contexts.",
+                "runner": lambda p: p.run_stage_2_generate_patches(
+                    None,  # load from cache
+                    self.threaded_mode.get(),
+                    self.stop_event,
+                ),
+            },
+            3: {
+                "name": "Test Patches",
+                "status": "Busy: Stage 3 - Testing patches...",
+                "prereq_file": self.project_root / "results" / "stage2_patches.json",
+                "prereq_message": "No patches found!\n\nRun Stage 2 to generate patches.",
+                "runner": lambda p: p.run_stage_3_test_patches(
+                    None,  # load from cache
+                    self.resume_event,
+                    self.stop_event,
+                ),
+            },
+        }
+
+        config = stage_config[stage_num]
+
+        if config["prereq_file"] and not config["prereq_file"].exists():
+            messagebox.showerror("Error", config["prereq_message"])
+            return
+
+        self._reset_pipeline_state()
+        self._save_configuration()
+        self._set_status(config["status"])
+
+        def stage_task():
+            self._toggle_controls(is_running=True)
+            try:
+                pipeline = self._create_pipeline()
+                config["runner"](pipeline)
+                if not self.stop_event.is_set():
+                    log(f">>> Stage {stage_num} complete!")
+            except Exception as e:
+                log(f"ERROR: Stage {stage_num} failed: {e}")
+            finally:
+                self._toggle_controls(is_running=False)
+                self._set_status("Idle")
+
+        threading.Thread(target=stage_task, daemon=True).start()
+
+    def _run_stage_1(self):
+        """Run stage 1: Build contexts."""
+        self._run_stage(1)
+
+    def _run_stage_2(self):
+        """Run stage 2: Generate patches."""
+        self._run_stage(2)
+
+    def _run_stage_3(self):
+        """Run stage 3: Test patches."""
+        self._run_stage(3)
+
+    def _run_full_pipeline(self):
+        """Run all 3 stages automatically."""
+        if not self._validate_corpus_ready():
+            return
+
+        self._reset_pipeline_state()
+        self._save_configuration()
+        mode = self.threaded_mode.get()
+        self._set_status(f"Busy: Running full 3-stage pipeline ({mode})...")
+
+        def pipeline_task():
+            self._toggle_controls(is_running=True)
+            try:
+                pipeline = self._create_pipeline()
+                pipeline.run_full_pipeline(
+                    self.bug_corpus,
+                    mode,
+                    self.resume_event,
+                    self.stop_event,
+                )
+                if not self.stop_event.is_set():
+                    log(">>> Full pipeline complete!")
+            except Exception as e:
+                log(f"ERROR: Pipeline failed: {e}")
+            finally:
+                self._toggle_controls(is_running=False)
+                self._set_status("Idle")
+
+        threading.Thread(target=pipeline_task, daemon=True).start()
+
+    def _create_pipeline(self):
+        """Create pipeline with current settings."""
+        config = json.loads(self.config_path.read_text())
+        config["max_parallel_llm"] = self.parallel_workers.get()
+
+        return AnalysisPipeline(
+            config,
+            self.project_root,
+            skip_llm_fix=self.dry_run_enabled.get(),
+            debug_on_failure=self.debug_mode_enabled.get(),
+            llm_provider=self.llm_provider.get(),
+            llm_model=self.llm_model.get(),
+        )
+
+    def _add_corpus_viewer(self, parent):
         """Create commit viewer and single commit runner."""
-        corpus_frame = tk.LabelFrame(self, text="Bug Corpus")
+        corpus_frame = tk.LabelFrame(parent, text="Bug Corpus")
         corpus_frame.pack(fill="both", expand=True, pady=5)
 
         self.corpus_listbox = tk.Listbox(corpus_frame, height=8)
@@ -213,13 +437,344 @@ class BugAnalysisGUI(tk.Frame):
         ).pack(fill="x", pady=2)
         controls.pack(side="right", fill="y", padx=5)
 
-    def _create_log_viewer(self):
+        tk.Label(controls, text="─" * 20).pack(fill="x", pady=5)
+        tk.Label(controls, text="Test Stages:", font=("TkDefaultFont", 9, "bold")).pack(
+            fill="x"
+        )
+
+        tk.Button(
+            controls,
+            text="1. Context",
+            command=lambda: self._run_single_stage(1),
+            bg="#E3F2FD",
+        ).pack(fill="x", pady=1)
+
+        tk.Button(
+            controls,
+            text="2. Patch",
+            command=lambda: self._run_single_stage(2),
+            bg="#FFF3E0",
+        ).pack(fill="x", pady=1)
+
+        tk.Button(
+            controls,
+            text="3. Test",
+            command=lambda: self._run_single_stage(3),
+            bg="#F3E5F5",
+        ).pack(fill="x", pady=1)
+
+        controls.pack(side="right", fill="y", padx=5)
+
+        tk.Button(
+            controls,
+            text="Debug Context",
+            command=self._debug_context,
+            bg="#FFECB3",
+        ).pack(fill="x", pady=1)
+
+        tk.Button(
+            controls,
+            text="Clear Cache",
+            command=self._clear_context_cache,
+            bg="#FFCDD2",
+        ).pack(fill="x", pady=1)
+
+    def _clear_context_cache(self):
+        """Clear all cached contexts."""
+        import shutil
+        from pathlib import Path
+
+        # TODO: check which function is responsible for which cache
+        cache_dir = Path("cache/contexts")
+        results_cache = Path("results/context_cache")
+
+        cleared = []
+
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            cache_dir.mkdir(parents=True)
+            cleared.append("cache/contexts")
+
+        if results_cache.exists():
+            shutil.rmtree(results_cache)
+            results_cache.mkdir(parents=True)
+            cleared.append("results/context_cache")
+
+        if cleared:
+            msg = f"Cleared: {', '.join(cleared)}"
+            log(msg)
+            messagebox.showinfo("Success", msg)
+        else:
+            messagebox.showinfo("Info", "No cache to clear")
+
+    def _debug_context(self):
+        """Debug of context building for selected bug."""
+        selection = self.corpus_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Select a bug first.")
+            return
+
+        bug = self.bug_corpus[selection[0]]
+        repo_name = bug.get("repo_name", "unknown")
+        bug_sha = bug.get("bug_commit_sha", "unknown")[:7]
+
+        log(f"\n{'='*60}")
+        log(f"DEBUG: Context Building")
+        log(f"Bug: {repo_name}:{bug_sha}")
+        log(f"{'='*60}\n")
+
+        # show bug details
+        log(f"Bug details:")
+        log(f"  Repo: {repo_name}")
+        log(f"  SHA: {bug.get('bug_commit_sha')}")
+        log(f"  Parent: {bug.get('parent_commit_sha')}")
+        log(f"  Changed files: {bug.get('changed_files', [])}")
+        log(f"  Issue title: {bug.get('issue_title', 'N/A')[:100]}")
+        log(f"  Issue body length: {len(bug.get('issue_body', ''))} chars")
+
+        # try to build context with detailed logging
+        from core.project_handler import ProjectHandler
+        from core.context_builder import ContextBuilder
+        from pathlib import Path
+
+        handler = ProjectHandler(repo_name)
+        handler.setup()
+
+        parent_sha = bug.get("parent_commit_sha")
+        log(f"\nChecking out parent commit: {parent_sha}")
+        handler.checkout(parent_sha)
+
+        log(f"\nRepo path: {handler.repo_path}")
+        log(f"Repo exists: {handler.repo_path.exists()}")
+
+        # check files
+        log(f"\nChecking changed files:")
+        for file_path in bug.get("changed_files", []):
+            full_path = handler.repo_path / file_path
+            log(f"  {file_path}:")
+            log(f"    Full path: {full_path}")
+            log(f"    Exists: {full_path.exists()}")
+            if full_path.exists():
+                try:
+                    content = full_path.read_text()
+                    log(f"    Size: {len(content)} bytes")
+                    log(f"    Lines: {len(content.splitlines())}")
+                    lines = content.splitlines()[:5]
+                    log(f"    First lines:")
+                    for line in lines:
+                        log(f"      {line[:80]}")
+                except Exception as e:
+                    log(f"    ERROR reading: {e}")
+
+        log(f"\nBuilding context...")
+        builder = ContextBuilder(
+            repo_path=handler.repo_path,
+            max_snippets=5,
+            debug=True,
+            cache_dir=Path("cache/contexts"),
+        )
+
+        context, formatted = builder.build_and_format(bug)
+
+        log(f"\n{'='*60}")
+        log(f"Context Results:")
+        log(f"  Classes: {len(context['aag']['classes'])}")
+        log(f"  Functions: {len(context['aag']['functions'])}")
+        log(f"  Snippets: {len(context['rag']['snippets'])}")
+        log(f"  Formatted length: {len(formatted)} chars")
+        log(f"{'='*60}\n")
+
+        if len(formatted) < 500:
+            log("Full formatted context:")
+            log(formatted)
+        else:
+            log("Formatted context preview:")
+            log(formatted[:500] + "...")
+
+        handler.cleanup()
+
+        log(f"\n{'='*60}")
+        log("Debug complete")
+        log(f"{'='*60}\n")
+
+    def _run_single_stage(self, stage):
+        """Test a single stage on selected bug."""
+        selection = self.corpus_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Select a bug from the list first.")
+            return
+
+        if not self._validate_corpus_ready():
+            return
+
+        bug = self.bug_corpus[selection[0]]
+        repo_name = bug.get("repo_name", "unknown")
+        bug_sha = bug.get("bug_commit_sha", "unknown")[:7]
+
+        stage_names = {
+            1: "Build Context",
+            2: "Generate Patch",
+            3: "Test Patch",
+            "full": "Full Pipeline (3 stages)",
+        }
+
+        self._set_status(f"Testing: {stage_names[stage]} - {repo_name}:{bug_sha}")
+
+        def test_task():
+            self._toggle_controls(is_running=True)
+            try:
+                pipeline = self._create_pipeline()
+
+                log(f"\n{'='*70}")
+                log(f"TESTING: {stage_names[stage]}")
+                log(f"Bug: {repo_name}:{bug_sha}")
+                log(f"{'='*70}\n")
+
+                if stage == 1:
+                    contexts = pipeline._build_contexts_for_repo(
+                        repo_name, [bug], self.stop_event, None
+                    )
+                    self._save_test_result("context", contexts)
+
+                elif stage == 2:
+                    context = self._load_test_context(repo_name, bug_sha)
+                    if not context:
+                        return
+
+                    bug_key = f"{repo_name}_{bug.get('bug_commit_sha', '')[:12]}"
+                    contexts = {bug_key: context}
+
+                    patches = pipeline._generate_patches_sequential(
+                        contexts, self.stop_event, None
+                    )
+                    self._save_test_result("patch", patches)
+
+                elif stage == 3:
+                    patch = self._load_test_patch(repo_name, bug_sha)
+                    if not patch:
+                        return
+
+                    from core.project_handler import ProjectHandler
+
+                    handler = ProjectHandler(repo_name)
+                    handler.setup()
+
+                    if not handler.setup_virtual_environment():
+                        log("ERROR: venv setup failed")
+                        return
+
+                    pipeline._test_single_patch(patch, handler)
+                    handler.cleanup()
+
+                elif stage == "full":
+                    pipeline.run_full_pipeline(
+                        [bug],  # single bug as list
+                        self.threaded_mode.get(),
+                        self.resume_event,
+                        self.stop_event,
+                    )
+
+                if not self.stop_event.is_set():
+                    log(f"\nSUCCESS: {stage_names[stage]} complete!")
+
+            except Exception as e:
+                log(f"\nERROR: {e}")
+                import traceback
+
+                log(traceback.format_exc())
+            finally:
+                self._toggle_controls(is_running=False)
+                self._set_status("Idle")
+
+        threading.Thread(target=test_task, daemon=True).start()
+
+    def _save_test_result(self, result_type, data):
+        """Save test result to file for inspection."""
+        import json
+        from pathlib import Path
+
+        if not data:
+            log(f"WARNING: No {result_type} data to save")
+            return
+
+        results_dir = Path("results")
+        results_dir.mkdir(exist_ok=True)
+
+        if isinstance(data, dict) and data:
+            actual_data = list(data.values())[0]
+        else:
+            actual_data = data
+
+        filename = f"test_single_{result_type}.json"
+        filepath = results_dir / filename
+
+        filepath.write_text(json.dumps(actual_data, indent=2, default=str))
+        log(f"Saved to: {filepath}")
+
+    def _load_test_context(self, repo_name, bug_sha):
+        """Load context from test file or stage1 cache."""
+        import json
+        from pathlib import Path
+
+        # TODO: test_single and stage1 or stage2 both still needed?
+        test_file = Path("results") / "test_single_context.json"
+        if test_file.exists():
+            try:
+                return json.loads(test_file.read_text())
+            except:
+                pass
+
+        stage1_file = Path("results") / "stage1_contexts.json"
+        if stage1_file.exists():
+            try:
+                all_contexts = json.loads(stage1_file.read_text())
+                for key, ctx in all_contexts.items():
+                    if repo_name in key and bug_sha in key:
+                        return ctx
+            except:
+                pass
+
+        messagebox.showerror(
+            "Error",
+            f"No context found for {repo_name}:{bug_sha}\n\n" "Run stage 1 first.",
+        )
+        return None
+
+    def _load_test_patch(self, repo_name, bug_sha):
+        """Load patch from test file or stage2 cache."""
+        import json
+        from pathlib import Path
+
+        test_file = Path("results") / "test_single_patch.json"
+        if test_file.exists():
+            try:
+                return json.loads(test_file.read_text())
+            except:
+                pass
+
+        stage2_file = Path("results") / "stage2_patches.json"
+        if stage2_file.exists():
+            try:
+                all_patches = json.loads(stage2_file.read_text())
+                for key, patch in all_patches.items():
+                    if repo_name in key and bug_sha in key:
+                        return patch
+            except:
+                pass
+
+        messagebox.showerror(
+            "Error",
+            f"No patch found for {repo_name}:{bug_sha}\n\n" "Run stage 2 first.",
+        )
+        return None
+
+    def _create_log_viewer(self, parent):
         """Create scrollable log viewer."""
-        log_frame = tk.LabelFrame(self, text="Logs")
+        log_frame = tk.LabelFrame(parent, text="Logs")
         log_frame.pack(fill="both", expand=True, pady=5)
 
         self.log_viewer = scrolledtext.ScrolledText(
-            log_frame, state="disabled", height=15
+            log_frame, state="disabled", height=15, width=60
         )
         self.log_viewer.pack(fill="both", expand=True)
 
@@ -315,6 +870,8 @@ class BugAnalysisGUI(tk.Frame):
             self.llm_provider.set(config.get("llm_provider", "manual"))
             self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
 
+            self.parallel_workers.set(config.get("max_parallel_llm", 5))
+
         except FileNotFoundError:
             log(f"config.json not found at {self.config_path}")
         except json.JSONDecodeError:
@@ -333,6 +890,7 @@ class BugAnalysisGUI(tk.Frame):
         config_data["repositories"] = repos
         config_data["llm_provider"] = self.llm_provider.get()
         config_data["llm_model"] = self.llm_model.get()
+        config_data["max_parallel_llm"] = self.parallel_workers.get()
 
         self.config_path.write_text(json.dumps(config_data, indent=2))
 
@@ -366,8 +924,13 @@ class BugAnalysisGUI(tk.Frame):
             return "ERROR", ANSIColor.RED
 
         if any(
-            keyword in stripped
-            for keyword in ["Tests PASSED", "--> Success", "Found FUNCTIONAL fix"]
+            keyword in stripped  # TODO: only look for .lower versions?
+            for keyword in [
+                "Tests PASSED",
+                "Success",
+                "SUCCESS",
+                "Found FUNCTIONAL fix",
+            ]
         ):
             return "SUCCESS", ANSIColor.GREEN
 
@@ -465,7 +1028,6 @@ class BugAnalysisGUI(tk.Frame):
     def _run_selected_bug(self):
         """Run analysis for a selected bug."""
         selection = self.corpus_listbox.curselection()
-
         if not selection:
             messagebox.showwarning("No Selection", "Select a bug from the list first.")
             return
@@ -473,73 +1035,35 @@ class BugAnalysisGUI(tk.Frame):
         if not self._validate_corpus_ready():
             return
 
-        selected_bug = self.bug_corpus[selection[0]]
-        self._run_pipeline(single_bug=selected_bug)
+        bug = self.bug_corpus[selection[0]]
+        repo_name = bug.get("repo_name", "unknown")
+        bug_sha = bug.get("bug_commit_sha", "unknown")[:7]
 
-    def _run_all_bugs(self):
-        """Run analysis for the entire bug corpus."""
-        if not self._validate_corpus_ready():
-            return
-
-        self._run_pipeline(single_bug=None)
-
-    def _run_pipeline(self, single_bug: dict | None = None):
-        """Run the analysis pipeline in a background thread."""
         self._reset_pipeline_state()
         self._save_configuration()
 
-        provider = self.llm_provider.get()
-        is_dry_run = self.dry_run_enabled.get()
+        mode = self.threaded_mode.get()
+        self._set_status(f"Busy: Running {repo_name}:{bug_sha} ({mode})...")
 
-        if single_bug:
-            status = (
-                f"Busy: Running single commit with {provider}..."
-                if not is_dry_run
-                else "Busy: Running single commit (Dry Run)..."
-            )
-            completion_message = ">>> Single commit analysis finished."
-        else:
-            status = (
-                f"Busy: Running pipeline with {provider}..."
-                if not is_dry_run
-                else "Busy: Running analysis pipeline (Dry Run)..."
-            )
-            completion_message = ">>> Full pipeline finished."
-
-        self._set_status(status)
-
-        def analysis_task():
+        def single_bug_task():
             self._toggle_controls(is_running=True)
             try:
-
-                pipeline = AnalysisPipeline.from_config_files(
-                    config_path=self.config_path,
-                    skip_llm_fix=is_dry_run,
-                    debug_on_failure=self.debug_mode_enabled.get(),
-                    llm_provider=provider,
-                    llm_model=self.llm_model.get(),
+                pipeline = self._create_pipeline()
+                pipeline.run_full_pipeline(
+                    [bug],
+                    mode,
+                    self.resume_event,
+                    self.stop_event,
                 )
-                if single_bug:
-                    pipeline.run_single_bug(
-                        single_bug,
-                        resume_event=self.resume_event,
-                        stop_event=self.stop_event,
-                    )
-                else:
-                    corpus = json.loads(self.corpus_path.read_text())
-                    pipeline.run_corpus(
-                        corpus,
-                        resume_event=self.resume_event,
-                        stop_event=self.stop_event,
-                    )
-
+                if not self.stop_event.is_set():
+                    log(f">>> {repo_name}:{bug_sha} complete!")
+            except Exception as e:
+                log(f"ERROR: {e}")
             finally:
                 self._toggle_controls(is_running=False)
                 self._set_status("Idle")
-                if not self.stop_event.is_set():
-                    log(completion_message)
 
-        threading.Thread(target=analysis_task, daemon=True).start()
+        threading.Thread(target=single_bug_task, daemon=True).start()
 
     def _reset_pipeline_state(self):
         """Reset control events for a new run."""
