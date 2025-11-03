@@ -163,5 +163,6 @@
       ],
       "deselect_nodes": []
     }
-  }
+  },
+  "max_parallel_llm": 5
 }

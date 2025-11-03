@@ -24,6 +24,7 @@ pytest
 pytest-mock
 pytest-cov
 pytest-sugar
+pytest-xdist
 
 # analysis and reporting
 pandas
