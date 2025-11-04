@@ -81,7 +81,6 @@ class GeminiProvider(LLMProvider):
 
     def _get_usage(self, response) -> dict[str, Any]:
         """Get token usage and finish reason from response."""
-        # TODO: maybe add elapsed time?
         usage = getattr(response, "usage_metadata", None)
 
         finish_reason = "UNKNOWN"

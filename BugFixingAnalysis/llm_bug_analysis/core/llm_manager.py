@@ -33,7 +33,6 @@ class LLMResponseHandler(ABC):
     @abstractmethod
     def _get_metadata(self) -> dict[str, int]:
         """Token counts and other stats."""
-        # TODO: add elapsed time
         pass
 
 

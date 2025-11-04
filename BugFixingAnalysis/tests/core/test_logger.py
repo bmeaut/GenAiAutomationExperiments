@@ -57,7 +57,6 @@ class TestLogger:
             " " * 1000,
         ],
     )
-    # TODO: add unicode special characters?
     def test_log_handles_various_message_formats(self, message, capsys):
         logger.log(message)
 

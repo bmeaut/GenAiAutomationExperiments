@@ -620,7 +620,7 @@ class StructuralAnalyzer:
         self.repo_path = Path(repo_path)
 
     def analyze_structure(self, changed_files: list[str]) -> dict[str, Any]:
-        """TODO"""
+        """Checks code structure of changed files."""
 
         info = {"class_hierarchy": {}, "method_signatures": {}}
 
@@ -799,7 +799,6 @@ class ContextFormatter:
 
     def format(self, context: dict[str, Any]) -> str:
         """Collect and format text from all methods."""
-        # TODO: should this function be split into two?
 
         if self.debug:
             self._log_debug_info(context)
