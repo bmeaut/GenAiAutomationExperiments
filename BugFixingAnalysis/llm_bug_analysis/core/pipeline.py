@@ -639,11 +639,19 @@ class AnalysisPipeline:
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         """Test all patches for one repository."""
+        if progress_callback:
+            progress_callback(0, len(repo_patches), f"Cloning {repo_name}...")
+
         handler = ProjectHandler(repo_name)
 
         try:
             log(f"  Cloning {repo_name}...")
             handler.setup()
+
+            if progress_callback:
+                progress_callback(
+                    0, len(repo_patches), f"Setting up env for {repo_name}..."
+                )
 
             log(f"Building virtual environment...")
             if not handler.setup_virtual_environment():
@@ -651,6 +659,14 @@ class AnalysisPipeline:
                 return
 
             env_setup_time = handler.venv.get_setup_time()
+
+            if progress_callback:
+                progress_callback(
+                    0,
+                    len(repo_patches),
+                    f"Env ready ({env_setup_time:.0f}s), testing {repo_name}...",
+                )
+
             log(
                 f"Environment ready in {env_setup_time:.1f}s, testing {len(repo_patches)} patches"
             )
@@ -672,7 +688,9 @@ class AnalysisPipeline:
                 bug_sha = bug.get("bug_commit_sha", "unknown")
 
                 if progress_callback:
-                    progress_callback(i, total, f"Testing: {repo_name}_{bug_sha[:7]}")
+                    progress_callback(
+                        i, total, f"Testing: {repo_name}_{bug_sha[:7]} [{i}/{total}]"
+                    )
 
                 log(f"\n  [{i}/{total}] {bug_sha[:7]}")
 
@@ -732,9 +750,7 @@ class AnalysisPipeline:
             )
             results["human_results"] = human
             total_time = time.time() - start_time
-            results["total_time_seconds"] = (
-                total_time  # TODO: quick fix: add env and llm time later
-            )
+            results["total_time_seconds"] = total_time  # TODO: quick fix: +env+llm_time
             results["env_setup_time_seconds"] = handler.venv.get_setup_time()
 
             self._log_final_comparison(results)

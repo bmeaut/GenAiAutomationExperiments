@@ -51,6 +51,11 @@ class BugAnalysisGUI(tk.Frame):
 
         self.status_message = tk.StringVar(value="Idle")
 
+        self.spinner_active = False
+        self.spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self.spinner_index = 0
+        self.spinner_base_message = ""
+
         self.corpus_data: list[dict] = []
 
         self.pack(pady=20, padx=20, fill="both", expand=True)
@@ -320,17 +325,16 @@ class BugAnalysisGUI(tk.Frame):
         stage_config = {
             1: {
                 "name": "Build Contexts",
-                "status": "Busy: Stage 1 - Building contexts...",
+                "status": "Building contexts...",
                 "prereq_file": None,
                 "prereq_message": None,
                 "runner": lambda p: p.run_stage_1_build_contexts(
-                    self.bug_corpus,
-                    self.stop_event,
+                    self.bug_corpus, self.stop_event, self._create_progress_updater()
                 ),
             },
             2: {
                 "name": "Generate Patches",
-                "status": f"Busy: Stage 2 - Generating patches ({self.threaded_mode.get()})...",
+                "status": f"Generating patches ({self.threaded_mode.get()})...",
                 "prereq_file": self.project_root
                 / ".cache"
                 / "pipeline_stages"
@@ -340,20 +344,33 @@ class BugAnalysisGUI(tk.Frame):
                     None,  # load from cache
                     self.threaded_mode.get(),
                     self.stop_event,
+                    self._create_progress_updater(),
                 ),
             },
             3: {
                 "name": "Test Patches",
-                "status": "Busy: Stage 3 - Testing patches...",
-                "prereq_file": self.project_root
-                / ".cache"
-                / "pipeline_stages"
-                / "stage2_patches.json",
-                "prereq_message": "No patches found!\n\nRun Stage 2 to generate patches.",
+                "status": "Testing patches...",
+                "prereq_file": (
+                    self.project_root
+                    / ".cache"
+                    / "pipeline_stages"
+                    / "stage1_contexts.json"
+                    if self.dry_run_enabled.get()
+                    else self.project_root
+                    / ".cache"
+                    / "pipeline_stages"
+                    / "stage2_patches.json"
+                ),
+                "prereq_message": (
+                    "No contexts found!\n\nRun Stage 1 to build contexts."
+                    if self.dry_run_enabled.get()
+                    else "No patches found!\n\nRun Stage 2 to generate patches."
+                ),
                 "runner": lambda p: p.run_stage_3_test_patches(
                     None,  # load from cache
                     self.resume_event,
                     self.stop_event,
+                    self._create_progress_updater(),
                 ),
             },
         }
@@ -366,20 +383,27 @@ class BugAnalysisGUI(tk.Frame):
 
         self._reset_pipeline_state()
         self._save_configuration()
-        self._set_status(config["status"])
 
         def stage_task():
             self._toggle_controls(is_running=True)
+            self._start_spinner(config["status"])
+
             try:
                 pipeline = self._create_pipeline()
                 config["runner"](pipeline)
-                if not self.stop_event.is_set():
+                if self.stop_event.is_set():
+                    final_status = f"Stage {stage_num} stopped by user"
+                    log(f">>> Stage {stage_num} stopped by user")
+                else:
+                    final_status = f"Stage {stage_num} complete!"
                     log(f">>> Stage {stage_num} complete!")
             except Exception as e:
+                final_status = f"ERROR: Stage {stage_num} failed: {str(e)[:50]}"
                 log(f"ERROR: Stage {stage_num} failed: {e}")
             finally:
+                self._stop_spinner()
                 self._toggle_controls(is_running=False)
-                self._set_status("Idle")
+                self._set_status(final_status)
 
         threading.Thread(target=stage_task, daemon=True).start()
 
@@ -403,10 +427,10 @@ class BugAnalysisGUI(tk.Frame):
         self._reset_pipeline_state()
         self._save_configuration()
         mode = self.threaded_mode.get()
-        self._set_status(f"Busy: Running full 3-stage pipeline ({mode})...")
 
         def pipeline_task():
             self._toggle_controls(is_running=True)
+            self._start_spinner(f"Running full pipeline ({mode})...")
             try:
                 pipeline = self._create_pipeline()
                 pipeline.run_full_pipeline(
@@ -414,14 +438,22 @@ class BugAnalysisGUI(tk.Frame):
                     mode,
                     self.resume_event,
                     self.stop_event,
+                    self._create_progress_updater(),
                 )
-                if not self.stop_event.is_set():
+                if self.stop_event.is_set():
+                    final_status = "Full pipeline stopped by user"
+                    log(">>> Full pipeline stopped by user")
+                else:
+                    final_status = "Full pipeline complete!"
                     log(">>> Full pipeline complete!")
+
             except Exception as e:
+                final_status = f"ERROR: Pipeline failed: {str(e)[:50]}"
                 log(f"ERROR: Pipeline failed: {e}")
             finally:
+                self._stop_spinner()
                 self._toggle_controls(is_running=False)
-                self._set_status("Idle")
+                self._set_status(final_status)
 
         threading.Thread(target=pipeline_task, daemon=True).start()
 
@@ -438,6 +470,19 @@ class BugAnalysisGUI(tk.Frame):
             llm_provider=self.llm_provider.get(),
             llm_model=self.llm_model.get(),
         )
+
+    def _create_progress_updater(self):
+        """Create progress callback that updates spinner message."""
+
+        def update_progress(current: int, total: int, message: str):
+            if total > 0:
+                percentage = int((current / total) * 100)
+                enhanced_message = f"{message} [{current}/{total} - {percentage}%]"
+            else:
+                enhanced_message = message
+            self._update_spinner_message(enhanced_message)
+
+        return update_progress
 
     def _add_corpus_viewer(self, parent):
         """Create commit viewer and single commit runner."""
@@ -647,15 +692,20 @@ class BugAnalysisGUI(tk.Frame):
 
         def test_task():
             self._toggle_controls(is_running=True)
+            self._start_spinner(f"{stage_names[stage]}: {repo_name}:{bug_sha}")
+
             try:
                 pipeline = self._create_pipeline()
 
-                log(f"\n{'='*70}")
+                log(f"\n{'='*60}")
                 log(f"TESTING: {stage_names[stage]}")
                 log(f"Bug: {repo_name}:{bug_sha}")
-                log(f"{'='*70}\n")
+                log(f"{'='*60}\n")
 
                 if stage == 1:
+                    self._update_spinner_message(
+                        f"Building context for {repo_name}:{bug_sha}"
+                    )
                     contexts = pipeline._build_contexts_for_repo(
                         repo_name, [bug], self.stop_event, None
                     )
@@ -669,6 +719,9 @@ class BugAnalysisGUI(tk.Frame):
                     bug_key = f"{repo_name}_{bug.get('bug_commit_sha', '')[:12]}"
                     contexts = {bug_key: context}
 
+                    self._update_spinner_message(
+                        f"Generating patch for {repo_name}:{bug_sha}"
+                    )
                     patches = pipeline._generate_patches_sequential(
                         contexts, self.stop_event, None
                     )
@@ -681,12 +734,23 @@ class BugAnalysisGUI(tk.Frame):
 
                     from core.project_handler import ProjectHandler
 
+                    self._update_spinner_message(f"Cloning {repo_name}...")
                     handler = ProjectHandler(repo_name)
                     handler.setup()
+
+                    self._update_spinner_message(
+                        f"Building environment for {repo_name}..."
+                    )
 
                     if not handler.setup_virtual_environment():
                         log("ERROR: venv setup failed")
                         return
+
+                    env_setup_time = handler.venv.get_setup_time()
+
+                    self._update_spinner_message(
+                        f"Environment ready ({env_setup_time:.0f}s), testing..."
+                    )
 
                     pipeline._test_single_patch(patch, handler)
                     handler.cleanup()
@@ -699,17 +763,29 @@ class BugAnalysisGUI(tk.Frame):
                         self.stop_event,
                     )
 
-                if not self.stop_event.is_set():
+                if self.stop_event.is_set():
+                    final_status = (
+                        f"{stage_names[stage]} stopped: {repo_name}:{bug_sha}"
+                    )
+                    log(f"\nSTOPPED: {stage_names[stage]}")
+                else:
+                    final_status = (
+                        f"{stage_names[stage]} complete: {repo_name}:{bug_sha}"
+                    )
                     log(f"\nSUCCESS: {stage_names[stage]} complete!")
 
             except Exception as e:
+                final_status = (
+                    f"ERROR: {stage_names[stage]} failed: {repo_name}:{bug_sha}"
+                )
                 log(f"\nERROR: {e}")
                 import traceback
 
                 log(traceback.format_exc())
             finally:
+                self._stop_spinner()
                 self._toggle_controls(is_running=False)
-                self._set_status("Idle")
+                self._set_status(final_status)
 
         threading.Thread(target=test_task, daemon=True).start()
 
@@ -921,15 +997,61 @@ class BugAnalysisGUI(tk.Frame):
         self.config_path.write_text(json.dumps(config_data, indent=2))
 
     def _set_status(self, message):
-        """Update status bar text."""
+        """Update status bar text and force GUI refresh."""
+
+        def update():
+            self.status_message.set(message)
+            self.master.update_idletasks()
+
         # after() is needed, so the GUI update happens on the main thread
-        self.master.after(0, lambda: self.status_message.set(message))
+        self.master.after(0, update)
+
+    def _start_spinner(self, base_message: str):
+        """Start animated spinner in status bar."""
+
+        def start_on_main_thread():
+            self.spinner_active = True
+            self.spinner_base_message = base_message
+            self.spinner_index = 0
+            self._update_spinner()
+
+        self.master.after(0, start_on_main_thread)
+
+    def _update_spinner(self):
+        """Update spinner animation frame."""
+        if not self.spinner_active:
+            return
+
+        char = self.spinner_chars[self.spinner_index]
+        self.status_message.set(f"{char} {self.spinner_base_message}")
+
+        # next frame
+        self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
+
+        # 100ms = 10 FPS
+        self.master.after(100, self._update_spinner)
+
+    def _stop_spinner(self):
+        """Stop spinner animation."""
+
+        def stop_on_main_thread():
+            self.spinner_active = False
+
+        self.master.after(0, stop_on_main_thread)
+
+    def _update_spinner_message(self, message: str):
+        """Update spinner message without restarting animation."""
+
+        def update_on_main_thread():
+            if self.spinner_active:
+                self.spinner_base_message = message
+
+        self.master.after(0, update_on_main_thread)
 
     def _log_message(self, message):
         """Log message with color coding to GUI and console."""
         log_tag, console_color = self._color_log_message(message)
 
-        # TODO: delete later
         print(f"{console_color}{message}{ANSIColor.RESET}")
 
         def update_gui_log():
@@ -1051,6 +1173,7 @@ class BugAnalysisGUI(tk.Frame):
             self._show_corpus_error("corrupted")
             return False
 
+    # TODO: too similar to _run_full_pipeline, merge later
     def _run_selected_bug(self):
         """Run analysis for a selected bug."""
         selection = self.corpus_listbox.curselection()
@@ -1069,10 +1192,10 @@ class BugAnalysisGUI(tk.Frame):
         self._save_configuration()
 
         mode = self.threaded_mode.get()
-        self._set_status(f"Busy: Running {repo_name}:{bug_sha} ({mode})...")
 
         def single_bug_task():
             self._toggle_controls(is_running=True)
+            self._start_spinner(f"Running {repo_name}:{bug_sha} ({mode})...")
             try:
                 pipeline = self._create_pipeline()
                 pipeline.run_full_pipeline(
@@ -1080,14 +1203,22 @@ class BugAnalysisGUI(tk.Frame):
                     mode,
                     self.resume_event,
                     self.stop_event,
+                    self._create_progress_updater(),
                 )
-                if not self.stop_event.is_set():
+                if self.stop_event.is_set():
+                    final_status = f"{repo_name}:{bug_sha} stopped by user"
+                    log(f">>> {repo_name}:{bug_sha} stopped by user")
+                else:
+                    final_status = f"{repo_name}:{bug_sha} complete!"
                     log(f">>> {repo_name}:{bug_sha} complete!")
+
             except Exception as e:
+                final_status = f"ERROR: {repo_name}:{bug_sha} failed: {str(e)[:50]}"
                 log(f"ERROR: {e}")
             finally:
+                self._stop_spinner()
                 self._toggle_controls(is_running=False)
-                self._set_status("Idle")
+                self._set_status(final_status)
 
         threading.Thread(target=single_bug_task, daemon=True).start()
 

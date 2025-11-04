@@ -26,9 +26,9 @@ class VirtualEnvironment:
         start_time = time.time()
         try:
             log("  Setting up venv...")
-
             if not self._create_venv():
                 return False
+            log("  Virtual environment created.")
 
             self._detect_project_type()
             log(f"  --> Detected: {self.project_type}")
@@ -39,6 +39,7 @@ class VirtualEnvironment:
 
             log("  Installing project dependencies...")
             self._install_dependencies()
+            log("      --> Done.")
 
             setup_time = time.time() - start_time
             log(f"Environment setup completed in {setup_time:.1f}s")
@@ -47,7 +48,9 @@ class VirtualEnvironment:
             return True
 
         except subprocess.CalledProcessError as e:
-            log(f"  --> CRITICAL FAILURE: command failed: {e.stderr}")
+            setup_time = time.time() - start_time
+            self._setup_time = setup_time
+            log(f"  --> CRITICAL FAILURE after {setup_time:.1f}s: {e.stderr}")
             return False
 
         except Exception as e:
@@ -55,7 +58,7 @@ class VirtualEnvironment:
             self._setup_time = setup_time
             import traceback
 
-            log(f"  --> FATAL ERROR during venv setup.")
+            log(f"  --> FATAL ERROR after {setup_time:.1f}s:")
             log(f"  --> Type: {type(e).__name__}")
             log(f"  --> Details: {e}")
             log(f"  --> Traceback:\n{traceback.format_exc()}")
