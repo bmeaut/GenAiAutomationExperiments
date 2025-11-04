@@ -182,6 +182,12 @@ class PatchEvaluator:
         existing_files = [f for f in changed_files if (repo_path / f).exists()]
         complexity = analyze_files(str(handler.repo_path), existing_files)
 
+        human_sha = bug.get("bug_commit_sha", "")
+        if human_sha:
+            test_files = self._get_changed_test_files(handler, human_sha)
+            if test_files:
+                self._copy_human_tests_to_ai_workspace(handler, human_sha, test_files)
+
         test_start = time.time()
         tests_ok = handler.venv.run_tests(
             test_command=self.test_command,
@@ -239,3 +245,63 @@ class PatchEvaluator:
             "avg_params": "N/A",
             "total_tokens": "N/A",
         }
+
+    def _is_test_file(self, filepath: Path | str) -> bool:
+        """Check if a file is part of the test suite."""
+        path = Path(filepath)
+
+        if path.name.startswith("test_") or path.name.endswith("_test.py"):
+            return True
+        if "test" in path.parts:
+            return True
+        if path.parent.name in ("tests", "test"):
+            return True
+
+        return False
+
+    def _get_changed_test_files(
+        self,
+        handler: ProjectHandler,
+        human_sha: str,
+    ) -> list[str]:
+        """Get list test file that were changed in human fix."""
+        all_changed = handler.get_changed_files(human_sha)
+
+        test_files = [f for f in all_changed if self._is_test_file(f)]
+        if test_files:
+            log(f"    --> Found {len(test_files)} changed test file(s):")
+            for tf in test_files:
+                log(f"        - {tf}")
+
+        return test_files
+
+    def _copy_human_tests_to_ai_workspace(
+        self, handler: ProjectHandler, human_sha: str, test_files: list[str]
+    ) -> bool:
+        """Copy human's test files into AI patched version."""
+        if not test_files:
+            return True
+
+        log(f"    --> Copying {len(test_files)} human test file(s)...")
+
+        for test_file in test_files:
+            try:
+                human_content = handler.get_file_at_commit(human_sha, test_file)
+
+                if human_content is None:
+                    log(
+                        f"        WARNING: Test file {test_file} not found in human fix."
+                    )
+                    continue
+
+                test_path = handler.repo_path / Path(test_file)
+                test_path.parent.mkdir(parents=True, exist_ok=True)
+                test_path.write_text(human_content, encoding="utf-8")
+
+                log(f"        - Copied {test_file}")
+
+            except Exception as e:
+                log(f"        ERROR: Failed to copy {test_file}: {e}")
+                return False
+
+        return True

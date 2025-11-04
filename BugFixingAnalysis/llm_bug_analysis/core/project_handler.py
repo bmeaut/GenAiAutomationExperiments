@@ -56,6 +56,26 @@ class ProjectHandler:
         """Get .py files changed in commit."""
         return self.git_ops.get_changed_files(commit_sha)
 
+    def get_file_at_commit(self, commit_sha: str, filepath: str) -> str | None:
+        """Get file from specific commit."""
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{commit_sha}:{filepath}"],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode == 0:
+                return result.stdout
+            else:
+                return None
+
+        except Exception as e:
+            log(f"ERROR: Failed to get {filepath} at {commit_sha}: {e}")
+            return None
+
     def get_full_file_content(self, commit_sha: str, file_path: str) -> str:
         """Read file content at specific commit."""
         return self.git_ops.get_full_file_content(commit_sha, file_path)
