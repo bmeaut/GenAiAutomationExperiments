@@ -138,7 +138,7 @@
     "type:bug",
     "kind/bug"
   ],
-  "test_command": "pytest",
+  "test_command": "pytest -n auto",
   "max_commits_per_repo": 3,
   "commit_search_depth": 300,
   "llm_provider": "gemini",

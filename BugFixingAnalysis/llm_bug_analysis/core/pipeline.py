@@ -316,7 +316,6 @@ class AnalysisPipeline:
         log(f"STAGE 2: Generating patches ({mode.upper()})")
         log("=" * 60)
 
-        # TODO: haven't used skip for a while, remove later
         if self.skip_llm_fix:
             log("WARNING: Skipping LLM generation...")
             return {}
@@ -470,8 +469,18 @@ class AnalysisPipeline:
     ) -> dict[str, Any]:
         """Generate a single patch from pre-built context."""
         bug = context_data["bug"]
-        formatted_context = context_data["formatted_context"]
         changed_files = context_data.get("changed_files", [])
+
+        if self.skip_llm_fix:
+            log(f"  Skipping LLM generation for {bug_key} (skip_llm_fix=True)")
+            return {
+                "bug": bug,
+                "llm_result": None,
+                "changed_files": changed_files,
+                "skipped": True,
+            }
+
+        formatted_context = context_data["formatted_context"]
 
         llm_result = self.patch_evaluator.llm_manager.generate_fix(
             bug=bug,
@@ -506,23 +515,61 @@ class AnalysisPipeline:
 
         # load patches if not provided
         if patches is None:
-            cache_file = (
-                self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
-            )
-            if not cache_file.exists():
-                log("ERROR: No patches found!")
-                log("   Run Stage 2 to generate patches.")
-                return
 
-            try:
-                patches = json.loads(cache_file.read_text())
-                if not isinstance(patches, dict):
-                    log("ERROR: Invalid patches format")
+            if self.skip_llm_fix:
+                log("Skip mode: Loading contexts from Stage 1...")
+                cache_file = (
+                    self.project_root
+                    / ".cache"
+                    / "pipeline_stages"
+                    / "stage1_contexts.json"
+                )
+                if not cache_file.exists():
+                    log("ERROR: No contexts found!")
+                    log("   Run Stage 1 to build contexts first.")
                     return
-                log(f"Loaded {len(patches)} patches from cache")
-            except Exception as e:
-                log(f"ERROR: Failed to load patches: {e}")
-                return
+
+                try:
+                    contexts = json.loads(cache_file.read_text())
+                    if not isinstance(contexts, dict):
+                        log("ERROR: Invalid contexts format")
+                        return
+
+                    patches = {
+                        bug_key: {
+                            "bug": ctx_data["bug"],
+                            "llm_result": None,  # no llm stuff in skip mode
+                            "changed_files": ctx_data.get("changed_files", []),
+                        }
+                        for bug_key, ctx_data in contexts.items()
+                    }
+                    log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
+
+                except Exception as e:
+                    log(f"ERROR: Failed to load contexts: {e}")
+                    return
+
+            else:
+                cache_file = (
+                    self.project_root
+                    / ".cache"
+                    / "pipeline_stages"
+                    / "stage2_patches.json"
+                )
+                if not cache_file.exists():
+                    log("ERROR: No patches found!")
+                    log("   Run Stage 2 to generate patches.")
+                    return
+
+                try:
+                    patches = json.loads(cache_file.read_text())
+                    if not isinstance(patches, dict):
+                        log("ERROR: Invalid patches format")
+                        return
+                    log(f"Loaded {len(patches)} patches from cache")
+                except Exception as e:
+                    log(f"ERROR: Failed to load patches: {e}")
+                    return
 
         else:
             if not isinstance(patches, dict):
@@ -603,7 +650,10 @@ class AnalysisPipeline:
                 log(f"ERROR: venv setup failed - skipping {repo_name}")
                 return
 
-            log(f"Environment ready, testing {len(repo_patches)} patches")
+            env_setup_time = handler.venv.get_setup_time()
+            log(
+                f"Environment ready in {env_setup_time:.1f}s, testing {len(repo_patches)} patches"
+            )
 
             total = len(repo_patches)
             for i, patch_data in enumerate(repo_patches, 1):
@@ -640,6 +690,10 @@ class AnalysisPipeline:
         handler: ProjectHandler,
     ) -> None:
         """Test a single pre-generated patch."""
+        import time
+
+        start_time = time.time()
+
         bug = patch_data["bug"]
         llm_result = patch_data.get("llm_result")
         changed_files = patch_data.get("changed_files", [])
@@ -653,7 +707,10 @@ class AnalysisPipeline:
             before = self._analyze_before(handler, parent_sha, changed_files)
             results["comp_before"] = before
 
-            if llm_result and not patch_data.get("error"):
+            if self.skip_llm_fix:
+                log(f"  Skipping AI fix (skip_llm_fix=True)")
+                results["ai_results"] = self._skipped_results()
+            elif llm_result and not patch_data.get("error"):
                 ai = self.patch_evaluator.evaluate_ai_fix(
                     bug=bug,
                     handler=handler,
@@ -674,12 +731,18 @@ class AnalysisPipeline:
                 bug,
             )
             results["human_results"] = human
+            total_time = time.time() - start_time
+            results["total_time_seconds"] = (
+                total_time  # TODO: quick fix: add env and llm time later
+            )
+            results["env_setup_time_seconds"] = handler.venv.get_setup_time()
 
             self._log_final_comparison(results)
             self.results_logger.log(results)
 
         except Exception as e:
-            log(f"ERROR: {e}")
+            total_time = time.time() - start_time
+            log(f"ERROR after {total_time:.1f}s: {e}")
 
     def run_full_pipeline(
         self,
@@ -749,6 +812,7 @@ class AnalysisPipeline:
         return {
             "applied_ok": "SKIPPED",
             "tests_passed": "SKIPPED",
+            "test_time_seconds": "SKIPPED",
             "complexity": {
                 "total_cc": "SKIPPED",
                 "total_cognitive": "SKIPPED",
@@ -767,6 +831,7 @@ class AnalysisPipeline:
                 "completion_tokens": "SKIPPED",
                 "thinking_tokens": "SKIPPED",
                 "total_tokens": "SKIPPED",
+                "generation_time_seconds": "SKIPPED",
             },
         }
 

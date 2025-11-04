@@ -21,6 +21,9 @@ class VirtualEnvironment:
 
     def setup(self) -> bool:
         """Create venv and install dependencies."""
+        import time
+
+        start_time = time.time()
         try:
             log("  Setting up venv...")
 
@@ -37,6 +40,10 @@ class VirtualEnvironment:
             log("  Installing project dependencies...")
             self._install_dependencies()
 
+            setup_time = time.time() - start_time
+            log(f"Environment setup completed in {setup_time:.1f}s")
+
+            self._setup_time = setup_time
             return True
 
         except subprocess.CalledProcessError as e:
@@ -44,6 +51,8 @@ class VirtualEnvironment:
             return False
 
         except Exception as e:
+            setup_time = time.time() - start_time
+            self._setup_time = setup_time
             import traceback
 
             log(f"  --> FATAL ERROR during venv setup.")
@@ -51,6 +60,10 @@ class VirtualEnvironment:
             log(f"  --> Details: {e}")
             log(f"  --> Traceback:\n{traceback.format_exc()}")
             return False
+
+    def get_setup_time(self) -> float:
+        """Get time taken for environment setup."""
+        return getattr(self, "_setup_time", 0.0)
 
     def execute_command(
         self,
@@ -184,6 +197,7 @@ class VirtualEnvironment:
                 "uv",
                 "pytest",
                 "pytest-cov",
+                "pytest-xdist",  # +pytest-sugar later?
                 "anyio",
             ],
             check=True,

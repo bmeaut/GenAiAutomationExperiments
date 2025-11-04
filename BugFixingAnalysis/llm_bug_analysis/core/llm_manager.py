@@ -268,6 +268,9 @@ class LLMManager:
         model: str = "gemini-2.5-flash",
     ) -> dict[str, Any]:
         """Generate fix from prebuilt context."""
+        import time
+
+        start_time = time.time()
 
         cached_result = self._load_from_cache(bug, provider, model)
         if cached_result is not None:
@@ -284,6 +287,7 @@ class LLMManager:
         result_model = model if provider != "manual" else "manual"
 
         if not text or not text.strip():
+            generation_time = time.time() - start_time
             log("  --> ERROR: No response received!")
             empty_result = {
                 "intent": None,
@@ -291,7 +295,7 @@ class LLMManager:
                 "raw_response": "",
                 "provider": provider,
                 "model": result_model,
-                "metadata": metadata,
+                "metadata": {**metadata, "generation_time_seconds": generation_time},
             }
             self._save_to_cache(bug, provider, model, empty_result)
             return empty_result
@@ -301,13 +305,15 @@ class LLMManager:
         parser = IntentParser()
         intent = parser.parse(text)
 
+        generation_time = time.time() - start_time
+
         final_result = {
             "intent": intent,
             "prompt": prompt,
             "raw_response": text,
             "provider": provider,
             "model": result_model,
-            "metadata": metadata,
+            "metadata": {**metadata, "generation_time_seconds": generation_time},
         }
         # TODO: add back context later to save into results,
         # or should it be save where it is created, so I don't

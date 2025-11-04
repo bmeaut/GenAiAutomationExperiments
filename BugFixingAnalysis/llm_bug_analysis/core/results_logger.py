@@ -42,6 +42,11 @@ class ResultsLogger:
         "complexity_after_human_cognitive",
         "complexity_after_human_avg_params",
         "complexity_after_human_total_tokens",
+        "env_setup_time_seconds",
+        "llm_generation_time_seconds",
+        "ai_test_time_seconds",
+        "human_test_time_seconds",
+        "total_time_seconds",
     ]
 
     def __init__(self, results_path: str | Path):
@@ -109,5 +114,10 @@ class ResultsLogger:
                     human_comp.get("total_cognitive"),
                     human_comp.get("avg_params"),
                     human_comp.get("total_tokens"),
+                    bug_data.get("env_setup_time_seconds", "N/A"),
+                    llm_metadata.get("generation_time_seconds", "N/A"),
+                    ai_results.get("test_time_seconds", "N/A"),
+                    human_results.get("test_time_seconds", "N/A"),
+                    bug_data.get("total_time_seconds", "N/A"),
                 ]
             )

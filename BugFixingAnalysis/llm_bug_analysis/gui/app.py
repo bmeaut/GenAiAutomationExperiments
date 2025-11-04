@@ -59,6 +59,7 @@ class BugAnalysisGUI(tk.Frame):
         self._load_configuration()
         self._update_model_dropdown_state()
         self._load_bug_corpus()
+        self._on_skip_llm_changed()
 
     # pylance says event is unused, but it's needed for the bind call
     # None is needed for manual call
@@ -156,6 +157,7 @@ class BugAnalysisGUI(tk.Frame):
             options,
             text="Skip LLM Fix (Dry Run)",
             variable=self.dry_run_enabled,
+            command=self._on_skip_llm_changed,
         ).pack(side="left")
 
         tk.Checkbutton(
@@ -172,6 +174,15 @@ class BugAnalysisGUI(tk.Frame):
         ).pack(side="left", padx=10)
 
         tk.Button(options, text="Clear Log", command=self._clear_log).pack(side="right")
+
+    def _on_skip_llm_changed(self):
+        """Enable/disable patch generation buttons with skip flag."""
+        if self.dry_run_enabled.get():
+            self.stage2_btn.config(state="disabled", bg="lightgray")
+            self.single_patch_btn.config(state="disabled", bg="lightgray")
+        else:
+            self.stage2_btn.config(state="normal")
+            self.single_patch_btn.config(state="normal", bg="#FFF3E0")
 
     def _toggle_log_panel(self):
         """Show/hide log viewer and resize window."""
@@ -280,11 +291,12 @@ class BugAnalysisGUI(tk.Frame):
             command=self._run_stage_1,
         ).pack(side="left", fill="x", expand=True, padx=(5, 1))
 
-        tk.Button(
+        self.stage2_btn = tk.Button(
             stage_buttons_frame,
             text="Stage 2: Generate Patches",
             command=self._run_stage_2,
-        ).pack(side="left", fill="x", expand=True, padx=1)
+        )
+        self.stage2_btn.pack(side="left", fill="x", expand=True, padx=1)
 
         tk.Button(
             stage_buttons_frame,
@@ -455,12 +467,13 @@ class BugAnalysisGUI(tk.Frame):
             bg="#E3F2FD",
         ).pack(fill="x", pady=1)
 
-        tk.Button(
+        self.single_patch_btn = tk.Button(
             controls,
             text="2. Patch",
             command=lambda: self._run_single_stage(2),
             bg="#FFF3E0",
-        ).pack(fill="x", pady=1)
+        )
+        self.single_patch_btn.pack(fill="x", pady=1)
 
         tk.Button(
             controls,

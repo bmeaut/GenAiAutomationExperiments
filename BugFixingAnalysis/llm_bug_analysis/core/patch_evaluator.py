@@ -80,6 +80,9 @@ class PatchEvaluator:
             ),
             "thinking_tokens": llm_fix.get("metadata", {}).get("thinking_tokens", 0),
             "total_tokens": llm_fix.get("metadata", {}).get("total_tokens", 0),
+            "generation_time_seconds": llm_fix.get("metadata", {}).get(
+                "generation_time_seconds", 0
+            ),
         }
 
         # apply and test the patch
@@ -98,6 +101,8 @@ class PatchEvaluator:
         bug: dict[str, Any],
     ) -> dict[str, Any]:
         """Test human written fix."""
+        import time
+
         log("  Evaluating Human Fix...")
 
         handler.checkout(fix_sha)
@@ -115,6 +120,7 @@ class PatchEvaluator:
         )
 
         # run tests
+        test_start = time.time()
         test_ok = handler.venv.run_tests(
             test_command=self.test_command,
             config=self.config,
@@ -123,9 +129,11 @@ class PatchEvaluator:
             run_type="human_fix",
             debug_helper=self.debug_helper,
         )
+        test_time = time.time() - test_start
 
         return {
             "tests_passed": test_ok,
+            "test_time_seconds": test_time,
             "complexity": complexity,
             "patch_stats": stats,
         }
@@ -141,6 +149,8 @@ class PatchEvaluator:
         debug_mode: bool,
     ) -> dict[str, Any]:
         """Apply AI patch and run tests."""
+        import time
+
         repo_path = Path(handler.repo_path)
         patch_file = repo_path / "llm.patch"
         patch_file.write_text(patch, encoding="utf-8")
@@ -172,6 +182,7 @@ class PatchEvaluator:
         existing_files = [f for f in changed_files if (repo_path / f).exists()]
         complexity = analyze_files(str(handler.repo_path), existing_files)
 
+        test_start = time.time()
         tests_ok = handler.venv.run_tests(
             test_command=self.test_command,
             config=self.config,
@@ -180,12 +191,14 @@ class PatchEvaluator:
             run_type="ai_fix",
             debug_helper=self.debug_helper,
         )
+        test_time = time.time() - test_start
 
         handler.reset_to_commit(parent_sha)
 
         return {
             "applied_ok": True,
             "tests_passed": tests_ok,
+            "test_time_seconds": test_time,
             "complexity": complexity,
             "patch_stats": patch_stats,
         }
@@ -195,6 +208,7 @@ class PatchEvaluator:
         return {
             "applied_ok": False,
             "tests_passed": False,
+            "test_time_seconds": 0.0,
             "complexity": {
                 "total_cc": reason,
                 "total_cognitive": reason,
@@ -213,6 +227,7 @@ class PatchEvaluator:
                 "completion_tokens": 0,
                 "thinking_tokens": 0,
                 "total_tokens": 0,
+                "generation_time_seconds": 0.0,
             },
         }
 
