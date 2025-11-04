@@ -19,15 +19,17 @@ class PatchEvaluator:
         debug_helper: DebugHelper,
         project_root: Path,
         context_cache_dir: Path | None = None,
-        patch_cache_dir: Path | None = None,
+        llm_response_cache_dir: Path | None = None,
     ):
         self.test_command = test_command
         self.config = config
         self.debug_helper = debug_helper
         self.project_root = Path(project_root)
         self.context_cache_dir = context_cache_dir
-        self.patch_cache_dir = patch_cache_dir
-        self.llm_manager = LLMManager(project_root, context_cache_dir, patch_cache_dir)
+        self.patch_cache_dir = llm_response_cache_dir
+        self.llm_manager = LLMManager(
+            project_root, context_cache_dir, llm_response_cache_dir
+        )
 
     def evaluate_ai_fix(
         self,
@@ -36,43 +38,17 @@ class PatchEvaluator:
         parent_sha: str,
         changed_files: list,
         debug_mode: bool,
-        llm_fix: dict[str, Any] | None = None,  # optional for pregenerated result
-        context_text: str | None = None,  # optional prebuilt context TODO: both??
-        llm_provider: str = "gemini",
-        llm_model: str = "gemini-2.5-flash",
+        llm_fix: dict[str, Any],
     ) -> dict[str, Any]:
-        """Generate and evaluate the AI fix (or use pre-generated)"""
+        """Evaluate pre-generated AI fix from stage 2."""
         log("  Evaluating AI Fix with AAG/RAG...")
 
         # start at buggy state
         handler.checkout(parent_sha)
 
-        if llm_fix is None:
-            if context_text is None:
-                from core.context_builder import ContextBuilder
-
-                builder = ContextBuilder(
-                    repo_path=handler.repo_path,
-                    max_snippets=5,
-                    debug=True,
-                    cache_dir=self.context_cache_dir,
-                )
-
-                if "changed_files" not in bug:
-                    bug["changed_files"] = changed_files
-
-                # TODO: do I need this context here?
-                context, context_text = builder.build_and_format(bug)
-                log(f"  --> Added changed files: {changed_files}")
-
-                # generate fix
-                llm_fix = self.llm_manager.generate_fix(
-                    bug, context_text, llm_provider, llm_model
-                )
-
         # TODO: validate LLM results, here or somewhere else?
         if not llm_fix or not llm_fix.get("intent"):
-            log("  --> ERROR: Failed to get valid fix from LLM.")
+            log("  --> ERROR: Invalid or missing llm_fix from stage 2.")
             return self._failed_results("INTENT_PARSE_FAILED")
 
         intent = llm_fix["intent"]

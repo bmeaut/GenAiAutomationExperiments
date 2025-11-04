@@ -16,8 +16,12 @@ class DebugHelper:
     def __init__(self, project_root: str | Path):
         self.project_root = Path(project_root)
         self.logs_dir = self.project_root / "results" / "test_logs"
-        self.failed_patches_dir = self.project_root / "results" / "failed_patches"
-        self.debug_dir = self.project_root / "results" / "patch_debug"
+        self.failed_patches_dir = (
+            self.project_root / "results" / "debug" / "failed_patches"
+        )
+        self.validation_errors_dir = (
+            self.project_root / "results" / "debug" / "validation_errors"
+        )
 
     def save_test_failure_log(
         self,
@@ -74,15 +78,15 @@ class DebugHelper:
 
     def save_debug_info(self, patch_validation: dict, bug: dict[str, Any]):
         """Save detailed information for failed patches."""
-        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        self.validation_errors_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = bug["repo_name"].replace("/", "_")
         sha = bug["bug_commit_sha"]
-        debug_file = f"{safe_name}_{sha[:7]}_debug.json"
-        debug_path = self.debug_dir / debug_file
+        debug_file = f"{safe_name}_{sha[:7]}_validation.json"
+        debug_path = self.validation_errors_dir / debug_file
 
         debug_path.write_text(json.dumps(patch_validation, indent=2), encoding="utf-8")
-        log(f"  --> Debug info saved to: {debug_path}")
+        log(f"  --> Validation errors saved to: {debug_path}")
 
     def handle_patch_failure(
         self,

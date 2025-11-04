@@ -13,14 +13,14 @@ venv_cache/
 *.egg
 *.egg-info/
 
+# my cache
+.cache/
+
 # IDE files
 .vscode/
 
 # application output
 /llm_bug_analysis/results/
-# exclude
-!/llm_bug_analysis/results/results.csv
-
 /llm_bug_analysis/corpus.json
 
 # backup files

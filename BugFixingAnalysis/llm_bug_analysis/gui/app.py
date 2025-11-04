@@ -319,7 +319,10 @@ class BugAnalysisGUI(tk.Frame):
             2: {
                 "name": "Generate Patches",
                 "status": f"Busy: Stage 2 - Generating patches ({self.threaded_mode.get()})...",
-                "prereq_file": self.project_root / "results" / "stage1_contexts.json",
+                "prereq_file": self.project_root
+                / ".cache"
+                / "pipeline_stages"
+                / "stage1_contexts.json",
                 "prereq_message": "No context found!\n\nRun Stage 1 to build contexts.",
                 "runner": lambda p: p.run_stage_2_generate_patches(
                     None,  # load from cache
@@ -330,7 +333,10 @@ class BugAnalysisGUI(tk.Frame):
             3: {
                 "name": "Test Patches",
                 "status": "Busy: Stage 3 - Testing patches...",
-                "prereq_file": self.project_root / "results" / "stage2_patches.json",
+                "prereq_file": self.project_root
+                / ".cache"
+                / "pipeline_stages"
+                / "stage2_patches.json",
                 "prereq_message": "No patches found!\n\nRun Stage 2 to generate patches.",
                 "runner": lambda p: p.run_stage_3_test_patches(
                     None,  # load from cache
@@ -483,21 +489,30 @@ class BugAnalysisGUI(tk.Frame):
         """Clear all cached contexts."""
         import shutil
 
-        # TODO: check which function is responsible for which cache
-        cache_dir = Path("cache/contexts")
-        results_cache = Path("results/context_cache")
+        cache_root = self.project_root / ".cache"
 
         cleared = []
 
-        if cache_dir.exists():
-            shutil.rmtree(cache_dir)
-            cache_dir.mkdir(parents=True)
-            cleared.append("cache/contexts")
+        # clear contexts
+        context_cache = cache_root / "contexts"
+        if context_cache.exists():
+            shutil.rmtree(context_cache)
+            context_cache.mkdir(parents=True)
+            cleared.append("contexts")
 
-        if results_cache.exists():
-            shutil.rmtree(results_cache)
-            results_cache.mkdir(parents=True)
-            cleared.append("results/context_cache")
+        # clear llm responses
+        llm_cache = cache_root / "llm_responses"
+        if llm_cache.exists():
+            shutil.rmtree(llm_cache)
+            llm_cache.mkdir(parents=True)
+            cleared.append("llm_responses")
+
+        # clear pipeline stages
+        stages_cache = cache_root / "pipeline_stages"
+        if stages_cache.exists():
+            shutil.rmtree(stages_cache)
+            stages_cache.mkdir(parents=True)
+            cleared.append("pipeline_stages")
 
         if cleared:
             msg = f"Cleared: {', '.join(cleared)}"
@@ -545,7 +560,6 @@ class BugAnalysisGUI(tk.Frame):
         log(f"\nRepo path: {handler.repo_path}")
         log(f"Repo exists: {handler.repo_path.exists()}")
 
-        # check files
         log(f"\nChecking changed files:")
         for file_path in bug.get("changed_files", []):
             full_path = handler.repo_path / file_path
@@ -569,7 +583,7 @@ class BugAnalysisGUI(tk.Frame):
             repo_path=handler.repo_path,
             max_snippets=5,
             debug=True,
-            cache_dir=Path("cache/contexts"),
+            cache_dir=self.project_root / ".cache" / "contexts",
         )
 
         context, formatted = builder.build_and_format(bug)
@@ -693,16 +707,16 @@ class BugAnalysisGUI(tk.Frame):
             log(f"WARNING: No {result_type} data to save")
             return
 
-        results_dir = Path("results")
-        results_dir.mkdir(exist_ok=True)
+        test_dir = self.project_root / "results" / "debug" / "test_single"
+        test_dir.mkdir(parents=True, exist_ok=True)
 
         if isinstance(data, dict) and data:
             actual_data = list(data.values())[0]
         else:
             actual_data = data
 
-        filename = f"test_single_{result_type}.json"
-        filepath = results_dir / filename
+        filename = f"{result_type}.json"
+        filepath = test_dir / filename
 
         filepath.write_text(json.dumps(actual_data, indent=2, default=str))
         log(f"Saved to: {filepath}")
@@ -710,15 +724,18 @@ class BugAnalysisGUI(tk.Frame):
     def _load_test_context(self, repo_name, bug_sha):
         """Load context from test file or stage1 cache."""
 
-        # TODO: test_single and stage1 or stage2 both still needed?
-        test_file = Path("results") / "test_single_context.json"
+        test_file = (
+            self.project_root / "results" / "debug" / "test_single" / "context.json"
+        )
         if test_file.exists():
             try:
                 return json.loads(test_file.read_text())
             except:
                 pass
 
-        stage1_file = Path("results") / "stage1_contexts.json"
+        stage1_file = (
+            self.project_root / ".cache" / "pipeline_stages" / "stage1_contexts.json"
+        )
         if stage1_file.exists():
             try:
                 all_contexts = json.loads(stage1_file.read_text())
@@ -737,14 +754,18 @@ class BugAnalysisGUI(tk.Frame):
     def _load_test_patch(self, repo_name, bug_sha):
         """Load patch from test file or stage2 cache."""
 
-        test_file = Path("results") / "test_single_patch.json"
+        test_file = (
+            self.project_root / "results" / "debug" / "test_single" / "patch.json"
+        )
         if test_file.exists():
             try:
                 return json.loads(test_file.read_text())
             except:
                 pass
 
-        stage2_file = Path("results") / "stage2_patches.json"
+        stage2_file = (
+            self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
+        )
         if stage2_file.exists():
             try:
                 all_patches = json.loads(stage2_file.read_text())

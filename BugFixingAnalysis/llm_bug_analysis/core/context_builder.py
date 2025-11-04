@@ -74,6 +74,8 @@ class ContextBuilder:
         )
 
         log("  --> Finding relevant code snippets...")
+        # existing_files filters files that don't exist at parent commit
+        # changed_files might include newly added files
         bug_with_existing = {**bug, "changed_files": existing_files}
         rag_context = self.rag_retriever.get_snippets(bug_with_existing)
         log(f"      Found {len(rag_context.get('snippets', []))} snippets")

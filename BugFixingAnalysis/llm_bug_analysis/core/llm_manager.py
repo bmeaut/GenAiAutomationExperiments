@@ -252,13 +252,13 @@ class LLMManager:
         self,
         project_root: Path,
         context_cache_dir: Path | None = None,
-        patch_cache_dir: Path | None = None,
+        llm_response_cache_dir: Path | None = None,
     ):
         self.project_root = Path(project_root)
         self.context_cache_dir = context_cache_dir
-        self.patch_cache_dir = patch_cache_dir
-        if patch_cache_dir:
-            patch_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.llm_response_cache_dir = llm_response_cache_dir
+        if llm_response_cache_dir:
+            llm_response_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def generate_fix(
         self,
@@ -323,7 +323,7 @@ class LLMManager:
         model: str,
     ) -> Path | None:
         """Get cache path for this bug and LLM combo."""
-        if not self.patch_cache_dir:
+        if not self.llm_response_cache_dir:
             return None
 
         repo_name = bug.get("repo_name", "unknown_repo")
@@ -331,7 +331,7 @@ class LLMManager:
 
         safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
 
-        repo_cache_dir = self.patch_cache_dir / safe_repo_name
+        repo_cache_dir = self.llm_response_cache_dir / safe_repo_name
         repo_cache_dir.mkdir(parents=True, exist_ok=True)
 
         safe_model = model.replace("/", "_").replace(":", "_")

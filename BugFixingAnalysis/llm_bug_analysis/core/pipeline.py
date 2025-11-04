@@ -48,11 +48,11 @@ class AnalysisPipeline:
         self.results_logger = ResultsLogger(results_path)
         self.debug_helper = DebugHelper(self.project_root)
 
-        self.context_cache_dir = project_root / "results" / "context_cache"
+        self.context_cache_dir = project_root / ".cache" / "contexts"
         self.context_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self.patch_cache_dir = project_root / "results" / "patches"
-        self.patch_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.llm_response_cache_dir = project_root / ".cache" / "llm_responses"
+        self.llm_response_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.patch_evaluator = PatchEvaluator(
             test_command=self.test_command,
@@ -60,7 +60,7 @@ class AnalysisPipeline:
             debug_helper=self.debug_helper,
             project_root=self.project_root,
             context_cache_dir=self.context_cache_dir,
-            patch_cache_dir=self.patch_cache_dir,
+            llm_response_cache_dir=self.llm_response_cache_dir,
         )
 
     @classmethod
@@ -90,6 +90,28 @@ class AnalysisPipeline:
             llm_provider=llm_provider,
             llm_model=llm_model,
         )
+
+    def _get_bug_cache_path(self, bug: dict[str, Any]) -> Path | None:
+        """Get cache file path for a bug."""
+        # TODO: from contextbuilder, should restructure?
+
+        if not self.context_cache_dir:
+            return None
+
+        repo_name = bug.get("repo_name", "unknown_repo")
+        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+
+        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+        repo_cache_dir = self.context_cache_dir / safe_repo_name
+
+        return repo_cache_dir / f"{commit_sha[:12]}.json"
+
+    def _extract_formatted_context(self, cached_context: dict[str, Any]) -> str:
+        """Extract formatted text from cached context."""
+        from core.context_builder import ContextFormatter
+
+        formatter = ContextFormatter(debug=False)
+        return formatter.format(cached_context)
 
     def _group_by_repo(self, corpus: list[dict[str, Any]]) -> dict[str, list]:
         """Group bugs by repository name."""
@@ -153,7 +175,10 @@ class AnalysisPipeline:
             f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
         )
 
-        cache_file = self.project_root / "results" / "stage1_contexts.json"
+        cache_file = (
+            self.project_root / ".cache" / "pipeline_stages" / "stage1_contexts.json"
+        )
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         try:
             cache_file.write_text(json.dumps(all_contexts, indent=2, default=str))
             log(f"Contexts saved to {cache_file}")
@@ -169,8 +194,55 @@ class AnalysisPipeline:
         stop_event: threading.Event,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Build contexts for all bugs in ONE repo."""
+        """Build contexts for all bugs in one repo."""
         contexts = {}
+
+        log(f"   Checking cache for {len(bugs)} bugs...")
+        uncached_bugs = []
+
+        for bug in bugs:
+            bug_sha = bug.get("bug_commit_sha", "unknown")
+            bug_key = f"{repo_name.replace('/', '_')}_{bug_sha[:12]}"
+
+            cache_path = self._get_bug_cache_path(bug)
+
+            if cache_path and cache_path.exists():
+                try:
+                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+
+                    required_keys = {"aag", "rag", "structural", "historical"}
+                    if not all(key in cached for key in required_keys):
+                        log(f"    [{bug_sha[:7]}] Cache invalid, will rebuild")
+                        uncached_bugs.append(bug)
+                        continue
+
+                    formatted_context = self._extract_formatted_context(cached)
+                    changed_files = bug.get("changed_files", [])
+                    if not changed_files:
+                        log(f"    No Python files changed (check corpus.json).")
+                        continue
+                    contexts[bug_key] = {
+                        "bug": bug,
+                        "formatted_context": formatted_context,
+                        "changed_files": changed_files,
+                    }
+                    log(f"    [{bug_sha[:7]}] loaded from cache.")
+
+                except Exception as e:
+                    log(f"    [{bug_sha[:7]}] Cache error: {e}, will rebuild")
+                    uncached_bugs.append(bug)
+
+            else:
+                uncached_bugs.append(bug)
+
+        cache_hits = len(bugs) - len(uncached_bugs)
+        log(f"  Cache: {cache_hits}/{len(bugs)} hits ({cache_hits/len(bugs)*100:.0f}%)")
+
+        if not uncached_bugs:
+            log(f"  All contexts cached - skipping clone!")
+            return contexts
+
+        log(f"  Cloning {repo_name} for {len(uncached_bugs)} uncached bugs...")
 
         temp_dir = Path(tempfile.mkdtemp(prefix=f"ctx_{repo_name.replace('/', '_')}_"))
 
@@ -183,8 +255,8 @@ class AnalysisPipeline:
             handler.setup()
             log(f"  Cloned to {temp_dir}")
 
-            total = len(bugs)
-            for i, bug in enumerate(bugs, 1):
+            total = len(uncached_bugs)
+            for i, bug in enumerate(uncached_bugs, 1):
                 if stop_event.is_set():
                     break
 
@@ -198,9 +270,9 @@ class AnalysisPipeline:
                 log(f"  [{i}/{total}] {bug_sha[:7]}")
 
                 try:
-                    changed_files = handler.get_changed_files(bug_sha)
+                    changed_files = bug.get("changed_files", [])
                     if not changed_files:
-                        log(f" No Python files changed.")
+                        log(f"    No Python files changed (check corpus.json).")
                         continue
 
                     handler.checkout(parent_sha)
@@ -212,12 +284,10 @@ class AnalysisPipeline:
                         cache_dir=self.context_cache_dir,
                     )
 
-                    bug_with_files = {**bug, "changed_files": changed_files}
-                    context, context_text = builder.build_and_format(bug_with_files)
+                    context, context_text = builder.build_and_format(bug)
 
                     contexts[bug_key] = {
                         "bug": bug,
-                        "context": context,  # TODO: should it keep context or just keep full prompt?
                         "formatted_context": context_text,
                         "changed_files": changed_files,
                     }
@@ -228,8 +298,9 @@ class AnalysisPipeline:
                     log(f"    FAIL: {e}")
 
         finally:
-            log(f"  Cleaning up {temp_dir}")
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            if temp_dir.exists():
+                log(f"  Cleaning up {temp_dir}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         return contexts
 
@@ -254,7 +325,12 @@ class AnalysisPipeline:
             stop_event = threading.Event()
 
         if contexts is None:
-            cache_file = self.project_root / "results" / "stage1_contexts.json"
+            cache_file = (
+                self.project_root
+                / ".cache"
+                / "pipeline_stages"
+                / "stage1_contexts.json"
+            )
             if not cache_file.exists():
                 log("ERROR: No contexts found!")
                 log("Run stage 1 to build contexts.")
@@ -291,7 +367,10 @@ class AnalysisPipeline:
             f"\nSUCCESS: Stage 2 complete: {len(patches)}/{len(contexts)} patches generated"
         )
 
-        cache_file = self.project_root / "results" / "stage2_patches.json"
+        cache_file = (
+            self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
+        )
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         try:
             cache_file.write_text(json.dumps(patches, indent=2, default=str))
             log(f"Patches saved to {cache_file}")
@@ -427,7 +506,9 @@ class AnalysisPipeline:
 
         # load patches if not provided
         if patches is None:
-            cache_file = self.project_root / "results" / "stage2_patches.json"
+            cache_file = (
+                self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
+            )
             if not cache_file.exists():
                 log("ERROR: No patches found!")
                 log("   Run Stage 2 to generate patches.")
@@ -579,8 +660,7 @@ class AnalysisPipeline:
                     parent_sha=parent_sha,
                     changed_files=changed_files,
                     debug_mode=self.debug_on_failure,
-                    llm_fix=llm_result,  # pregenerated
-                    context_text=None,
+                    llm_fix=llm_result,
                 )
                 results["ai_results"] = ai
             else:

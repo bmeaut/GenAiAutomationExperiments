@@ -250,6 +250,9 @@ class CommitAnalyzer:
         if not py_files:
             return None
 
+        changed_files = [f.filename for f in py_files]
+        log(f"    --> Changed files: {changed_files}")
+
         parent_sha = commit.parents[0].sha
         changed_code = any(
             self.is_functional_change(parent_sha, commit.sha, py_file.filename)
@@ -268,6 +271,7 @@ class CommitAnalyzer:
             "bug_commit_sha": commit.sha,
             "parent_commit_sha": parent_sha,
             "commit_message": commit_message.split("\n")[0],
+            "changed_files": changed_files,
             **issue_data,
         }
 
