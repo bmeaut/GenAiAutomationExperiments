@@ -10,6 +10,7 @@ from github.Issue import Issue
 
 from core.logger import log
 from .github_client import GitHubClient
+from core.ast_utility import ASTUtils
 
 
 class DocstringStripper(ast.NodeTransformer):
@@ -204,8 +205,16 @@ class CommitAnalyzer:
             content_before = self._get_file_content(file_path, parent_sha)
             content_after = self._get_file_content(file_path, commit_sha)
 
-            tree_before = ast.parse(content_before)
-            tree_after = ast.parse(content_after)
+            tree_before = ASTUtils.parse_string(
+                content_before, f"{file_path}@{parent_sha}"
+            )
+            tree_after = ASTUtils.parse_string(
+                content_after, f"{file_path}@{commit_sha}"
+            )
+
+            # if parsing failes, probably functional change
+            if not tree_before or not tree_after:
+                return True
 
             stripper = DocstringStripper()
             code_before = ast.unparse(stripper.visit(tree_before))

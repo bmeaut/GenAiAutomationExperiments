@@ -4,6 +4,7 @@ from typing import Any
 from abc import ABC, abstractmethod
 
 from core.logger import log
+from core.ast_utility import ASTUtils
 
 
 class CodeLocator:
@@ -22,10 +23,10 @@ class CodeLocator:
         self, method_name: str, class_name: str | None = None
     ) -> int | None:
         """Find line where method starts (0-indexed)."""
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.FunctionDef) and node.name == method_name:
+        for node in ASTUtils.get_functions(self.tree, include_async=True):
+            if node.name == method_name:
                 if class_name:
-                    parent = self._find_parent_class(node)
+                    parent = ASTUtils.find_parent_class(node, self.tree)
                     if parent and parent.name == class_name:
                         return node.lineno - 1  # AST uses 1-indexed, use 0-indexed
                 else:
@@ -36,36 +37,27 @@ class CodeLocator:
         self, method_name: str, class_name: str | None = None
     ) -> int | None:
         """Find line after method ends (0-indexed)."""
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.FunctionDef) and node.name == method_name:
+        for node in ASTUtils.get_functions(self.tree, include_async=True):
+            if node.name == method_name:
                 if class_name:
-                    parent = self._find_parent_class(node)
+                    parent = ASTUtils.find_parent_class(node, self.tree)
                     if not parent or parent.name != class_name:
                         continue
-                return node.end_lineno
-        return None
-
-    def _find_parent_class(self, node: ast.AST) -> ast.ClassDef | None:
-        """Find parent class of a node."""
-        for potential_parent in ast.walk(self.tree):
-            if isinstance(potential_parent, ast.ClassDef):
-                for child in ast.walk(potential_parent):
-                    if child is node:
-                        return potential_parent
+                return node.end_lineno  # TODO: index modification needed here?
         return None
 
     def find_class_start(self, class_name: str) -> int | None:
         """Find line where a class starts (0 indexed)"""
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
+        for node in ASTUtils.get_classes(self.tree):
+            if node.name == class_name:
                 return node.lineno - 1
         return None
 
     def find_class_end(self, class_name: str) -> int | None:
         """Find line after a class ends."""
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                return node.end_lineno
+        for node in ASTUtils.get_classes(self.tree):
+            if node.name == class_name:
+                return node.end_lineno  # TODO: index modification needed here?
         return None
 
     def find_insertion_point(

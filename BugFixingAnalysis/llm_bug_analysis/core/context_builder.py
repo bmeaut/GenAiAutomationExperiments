@@ -1,3 +1,4 @@
+from __future__ import annotations
 import ast
 import re
 import json
@@ -8,6 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from core.logger import log
+from core.ast_utility import ASTUtils
 
 CodeNode = Union[ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef]
 
@@ -43,7 +45,6 @@ class ContextBuilder:
             log("  --> Using cached context.")
             return cached_context
 
-        # debugging
         changed_files = bug.get("changed_files", [])
 
         if not changed_files:
@@ -52,7 +53,6 @@ class ContextBuilder:
 
         log(f"  --> Changed files to analyze: {changed_files}")
 
-        # check if files exist
         existing_files = []
         for file_path in changed_files:
             full_path = Path(self.aag_builder.repo_path) / file_path
@@ -65,7 +65,6 @@ class ContextBuilder:
         if not existing_files:
             log("  --> WARNING: No changed files at parent commit (all newly added?)")
             return self._empty_context()
-        # debugging
 
         log("  --> Building syntax graph...")
         aag_context = self.aag_builder.build_syntax_graph(existing_files)
@@ -186,59 +185,24 @@ class AAGBuilder:
     def __init__(self, repo_path: str | Path):
         self.repo_path = Path(repo_path)
 
-    @staticmethod
-    def _get_name_static(node: ast.AST) -> str:
-        if isinstance(node, ast.Name):
-            return node.id
-        elif isinstance(node, ast.Attribute):
-            return f"{AAGBuilder._get_name_static(node.value)}.{node.attr}"
-        else:
-            try:
-                return ast.unparse(node)
-            except:
-                return str(type(node).__name__)
-
     def build_syntax_graph(self, changed_files: list[str]) -> dict[str, Any]:
         """Build graph for the changed files."""
         aag = {"classes": {}, "functions": {}, "dependencies": [], "call_graph": []}
 
-        log(
-            f"      AAG: Processing {len(changed_files)} files from {self.repo_path}"
-        )  # debug
+        log(f"      Building syntax graph for {len(changed_files)} files")
 
+        errors = []
         for file_path in changed_files:
-
-            # debugging
-            full_path = self.repo_path / file_path
-
-            if not full_path.exists():
-                log(f"      AAG: File missing: {file_path}")
-                continue
-
             try:
-                with open(full_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                log(f"      AAG: {file_path} ({len(content)} bytes)")
-
-                if not content.strip():
-                    log(f"      AAG: WARNING: File is empty!")
-                    continue
-
-                if not file_path.endswith(".py"):
-                    log(f"      AAG: WARNING: Not a .py file")
-                    continue
-
+                self._parse_file_structure(file_path, aag)
             except Exception as e:
-                log(f"      AAG: ERROR: Cannot read {file_path}: {e}")
-                continue
-            # debugging
-
-            self._parse_file_structure(file_path, aag)
+                errors.append(f"{file_path}: {e}")
 
         log(
-            f"      AAG: Result - {len(aag['classes'])} classes, {len(aag['functions'])} functions"
-        )  # debug
+            f"      --> {len(aag['classes'])} classes, {len(aag['functions'])} functions"
+        )
+        if errors:
+            log(f"      --> {len(errors)} files had errors")
 
         return aag
 
@@ -246,97 +210,55 @@ class AAGBuilder:
         """Parse a file, get its structure."""
         full_path = self.repo_path / file_path
 
-        if not full_path.exists():
+        result = ASTUtils.parse_file(full_path)
+        if not result:
             return
 
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                content = f.read()  # TODO: use path open?
+        tree, _ = result
 
-            log(f"      AAG: Parsing {file_path}...")  # debug
+        for cls in ASTUtils.get_classes(tree):
+            self._get_class(cls, file_path, aag)
 
-            tree = ast.parse(content, filename=file_path)
-
-            class_count = 0
-            func_count = 0
-
-            # go through the tree, looking for classes and functions
-            # TODO: have a few of these, restructure needed?
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    class_count += 1
-                    self._get_class(node, file_path, aag, tree)
-                elif isinstance(node, ast.FunctionDef):
-                    if not self._is_inside_class(node, tree):
-                        func_count += 1
-                        self._get_function(node, file_path, aag)
-
-            log(
-                f"      AAG: Found {class_count} classes, {func_count} top-level functions"
-            )
-
-        except SyntaxError as e:
-            log(f"      AAG: Syntax error in {file_path}: {e}")
-        except Exception as e:
-            log(f"      AAG: Parse error in {file_path}: {e}")
-            import traceback
-
-            log(traceback.format_exc())
+        for func in ASTUtils.get_functions(tree, exclude_class_methods=True):
+            self._get_function(func, file_path, aag)
 
     def _get_class(
-        self, node: ast.ClassDef, file_path: str, aag: dict[str, Any], tree: ast.Module
+        self,
+        node: ast.ClassDef,
+        file_path: str,
+        aag: dict[str, Any],
     ) -> None:
         """Extract class info."""
         methods = []
 
         for item in node.body:
-            if isinstance(item, ast.FunctionDef):
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 methods.append(
                     {
                         "name": item.name,
-                        "params": [arg.arg for arg in item.args.args],
+                        "params": ASTUtils.get_function_params(item),
                         "line": item.lineno,
                     }
                 )
 
         aag["classes"][node.name] = {
             "methods": methods,
-            "bases": [self._get_name_static(base) for base in node.bases],
+            "bases": ASTUtils.get_base_classes(node),
             "location": f"{file_path}:{node.lineno}",
         }
 
     def _get_function(
-        self, node: ast.FunctionDef, file_path: str, aag: dict[str, Any]
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        file_path: str,
+        aag: dict[str, Any],
     ) -> None:
         """Extract function info."""
         aag["functions"][node.name] = {
-            "params": [arg.arg for arg in node.args.args],
-            "calls": self._get_function_calls(node),
+            "params": ASTUtils.get_function_params(node),
+            "calls": ASTUtils.get_function_calls(node),
             "location": f"{file_path}:{node.lineno}",
         }
-
-    def _is_inside_class(self, func_node: ast.FunctionDef, tree: ast.Module) -> bool:
-        """Check if function is from a class."""
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                for item in node.body:
-                    if item == func_node:
-                        return True
-        return False
-
-    def _get_function_calls(self, node: ast.FunctionDef) -> list[str]:
-        """Find all calls inside a function."""
-        calls = []
-
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                if isinstance(child.func, ast.Name):
-                    calls.append(child.func.id)
-                elif isinstance(child.func, ast.Attribute):
-                    calls.append(child.func.attr)
-
-        # for duplicates
-        return list(set(calls))
 
 
 class RAGRetriever:
@@ -380,27 +302,17 @@ class RAGRetriever:
     def _get_full_snippets(self, file_path: str) -> list[dict[str, Any]]:
         full_path = self.repo_path / file_path
 
-        if not full_path.exists():
+        result = ASTUtils.parse_file(full_path)
+        if not result:
             return []
 
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            tree = ast.parse(content, filename=file_path)
-            lines = content.split("\n")
-
-        except Exception as e:
-            log(f"Warning: Could not parse {file_path}: {e}")
-            return []
-
+        tree, lines = result
         snippets = []
 
-        # TODO: already have this in AAG, refactor later
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                snippet_data = self._get_snippet(node, lines, file_path)
-                snippets.append(snippet_data)
+        nodes = ASTUtils.get_classes(tree) + ASTUtils.get_functions(tree)
+        for node in nodes:
+            snippet_data = self._get_snippet(node, lines, file_path)
+            snippets.append(snippet_data)
 
         return snippets
 
@@ -633,25 +545,20 @@ class StructuralAnalyzer:
         """Analyze a single file and update structural info."""
         full_path = self.repo_path / file_path
 
-        if not full_path.exists():
+        result = ASTUtils.parse_file(full_path)
+        if not result:
             return
 
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                tree = ast.parse(f.read(), filename=file_path)
-        except Exception as e:
-            log(f"Warning: Could not parse {file_path}: {e}")
-            return
+        tree, _ = result
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                self._get_class_info(node, info)
+        for cls in ASTUtils.get_classes(tree):
+            self._get_class_info(cls, info)
 
     def _get_class_info(self, node: ast.ClassDef, info: dict[str, Any]) -> None:
         """Get hierarchy and method data."""
 
         info["class_hierarchy"][node.name] = {
-            "bases": [AAGBuilder._get_name_static(base) for base in node.bases],
+            "bases": ASTUtils.get_base_classes(node),
             "methods": [],
         }
 
@@ -665,13 +572,13 @@ class StructuralAnalyzer:
                 info["method_signatures"][method_key] = sig
 
     def _get_signature(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> dict[str, Any]:
         """Get function details."""
 
         return {
             "name": node.name,
-            "params": [arg.arg for arg in node.args.args],
+            "params": ASTUtils.get_function_params(node),
             "defaults": len(node.args.defaults),
             "return_type": ast.unparse(node.returns) if node.returns else None,
             "decorators": [ast.unparse(dec) for dec in node.decorator_list],
@@ -914,9 +821,7 @@ class ContextFormatter:
             output.append("\n**CLASS HIERARCHY:**")
 
             for class_name, info in structural["class_hierarchy"].items():
-                bases_str = (
-                    ", ".join(info.get("bases", [])) if info.get("bases") else "object"
-                )
+                bases_str = ", ".join(info.get("bases", [])) or "object"
                 output.append(f"  {class_name}({bases_str})")
 
                 methods = info.get("methods", [])
