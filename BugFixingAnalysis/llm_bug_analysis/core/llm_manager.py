@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 from abc import ABC, abstractmethod
 
-from .context_builder import ContextBuilder
 from .llm_providers import get_llm_provider, LLMProvider
 from core.logger import log
 

@@ -26,7 +26,6 @@ class PatchEvaluator:
         self.debug_helper = debug_helper
         self.project_root = Path(project_root)
         self.context_cache_dir = context_cache_dir
-        self.patch_cache_dir = llm_response_cache_dir
         self.llm_manager = LLMManager(
             project_root, context_cache_dir, llm_response_cache_dir
         )

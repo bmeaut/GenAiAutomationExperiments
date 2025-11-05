@@ -63,34 +63,6 @@ class AnalysisPipeline:
             llm_response_cache_dir=self.llm_response_cache_dir,
         )
 
-    @classmethod
-    def from_config_files(
-        cls,
-        config_path: Path,
-        skip_llm_fix: bool = False,
-        debug_on_failure: bool = False,
-        llm_provider: str = "gemini",
-        llm_model: str = "gemini-2.5-flash",
-    ) -> "AnalysisPipeline":
-        """Load pipeline from config.json."""
-        config_path = Path(config_path)
-        project_root = config_path.parent
-
-        try:
-            config = json.loads(config_path.read_text())
-        except FileNotFoundError as e:
-            log(f"ERROR: {e.filename} not found.")
-            raise
-
-        return cls(
-            config=config,
-            project_root=project_root,
-            skip_llm_fix=skip_llm_fix,
-            debug_on_failure=debug_on_failure,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-        )
-
     def _get_bug_cache_path(self, bug: dict[str, Any]) -> Path | None:
         """Get cache file path for a bug."""
         # TODO: from contextbuilder, should restructure?

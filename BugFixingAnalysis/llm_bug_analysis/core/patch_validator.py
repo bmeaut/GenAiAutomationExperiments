@@ -4,8 +4,6 @@ from pathlib import Path
 from typing import Any
 import git
 
-from core.logger import log
-
 
 class PatchValidator:
     """Validates patches and provides failure analysis."""

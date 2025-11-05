@@ -14,7 +14,7 @@ def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:
     total_cognitive = 0
     total_params = 0
     total_tokens = 0
-    function_count = 0
+    function_count = 0  # TODO: add to results
 
     # only look at actual Python files
     py_files = [f for f in filenames if f and f.endswith(".py")]

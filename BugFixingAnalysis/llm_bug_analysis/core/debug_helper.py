@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import shutil
 import subprocess
@@ -92,7 +93,7 @@ class DebugHelper:
         self,
         patch_path: str,
         bug: dict[str, Any],
-        handler: "ProjectHandler",
+        handler: ProjectHandler,
     ) -> bool:
         """Pause for manual debugging when patch fails."""
         log("\n" + "=" * 60)

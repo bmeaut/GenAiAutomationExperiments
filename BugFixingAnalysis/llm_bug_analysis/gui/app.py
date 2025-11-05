@@ -56,8 +56,6 @@ class BugAnalysisGUI(tk.Frame):
         self.spinner_index = 0
         self.spinner_base_message = ""
 
-        self.corpus_data: list[dict] = []
-
         self.pack(pady=20, padx=20, fill="both", expand=True)
         self._create_widgets()
         self._configure_log_colors()

@@ -120,14 +120,6 @@ class PatchFormatter:
     def format_removed_lines(self, lines: list[str]) -> str:
         return "".join("-" + line for line in lines)
 
-    def calculate_context_window(
-        self, target_line: int, context_size: int = 3
-    ) -> tuple[int, int]:
-        """Calculate how much context to show before target."""
-        before_count = min(context_size, target_line)
-        start_line = max(0, target_line - before_count)
-        return start_line, before_count
-
     def build_patch(
         self,
         start_line: int,
