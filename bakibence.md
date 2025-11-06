@@ -123,3 +123,20 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
 - Szakdolgozat írása:
     - Váz kialakítása
     - Vegyes, összeszedetlen jegyzetek rendezése és bővítése
+
+# 9. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+- Befejeztem a pipeline kisebb részekre bontását, így futtatható mind külön, egyszerűbb a hibák megtalálása és javítása.
+    - Minden részhez tartozik cachelés is.
+    - Le lehet futtatni minden részt csak egy repóra is, így vizsgálható egy-egy specifikus hiba is gyorsabban.
+- A tesztelt repók tesztjei már több szálon futnak, gyorsabb lefutás.
+- Eltárolom már azt is, hogy mennyi időbe telt az LLM válasz, környezet felépítése, tesztek futtatása.
+- Apró de fontos módosítás, hogy amennyiben a hivatalos javítás új teszteseteket is létrehozott, azok is le legyenek futtatva a generált javításon.
+- Volt egy-két fájl, ami AST bejárást alkalmazott, ezeket egységesítettem.
+- Rendszereztem a forrásokat, elkezdtem a szakdolgozat írását.
+
+## Mivel fogok foglalkozni jövő héten
+- Szakdolgozat írása
+- Tesztek írása
+- Teljes pipeline futtatás, adatgyűjtés
+- Hibák alapján iterálás
