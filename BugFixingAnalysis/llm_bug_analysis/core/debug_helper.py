@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from core.logger import log
+from .logger import log
 
 if TYPE_CHECKING:
     from .project_handler import ProjectHandler

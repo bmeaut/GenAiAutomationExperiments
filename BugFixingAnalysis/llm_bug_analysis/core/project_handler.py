@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from . import cleanup_manager
-from core.logger import log
+from .logger import log
 from .patch_validator import PatchValidator
 from .patch_applicator import PatchApplicator
 from .git_operations import GitOperations

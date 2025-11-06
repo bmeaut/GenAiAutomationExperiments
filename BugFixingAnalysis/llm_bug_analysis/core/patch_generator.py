@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Any
 from abc import ABC, abstractmethod
 
-from core.logger import log
-from core.ast_utility import ASTUtils
+from .logger import log
+from .ast_utility import ASTUtils
 
 
 class CodeLocator:

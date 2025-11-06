@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from core.logger import log
+from .logger import log
 from .project_handler import ProjectHandler
 from .analysis import analyze_files
 from .patch_generator import PatchGenerator

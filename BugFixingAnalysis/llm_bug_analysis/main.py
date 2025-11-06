@@ -4,6 +4,10 @@ import tkinter as tk
 from tkinter import messagebox
 from gui.app import BugAnalysisGUI
 import threading
+import os
+import sys
+
+from .gui.app import BugAnalysisGUI
 
 
 def main():

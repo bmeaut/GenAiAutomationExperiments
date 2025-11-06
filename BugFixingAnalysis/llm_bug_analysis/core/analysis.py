@@ -3,7 +3,7 @@ import lizard
 import complexipy
 from typing import Any
 
-from core.logger import log
+from .logger import log
 
 
 def analyze_files(repo_path: str, filenames: list[str]) -> dict[str, Any]:

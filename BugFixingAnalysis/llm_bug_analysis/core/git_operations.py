@@ -2,7 +2,8 @@ from pathlib import Path
 import git
 from git import Repo
 
-from core.logger import log
+from .logger import log
+from .terminal_manager import TerminalManager
 
 
 class GitOperations:
@@ -46,7 +47,6 @@ class GitOperations:
 
         try:
             commit = self.repo.commit(commit_sha)
-
             if not commit.parents:
                 log("  --> Commit has no parent, skipping.")
                 return []

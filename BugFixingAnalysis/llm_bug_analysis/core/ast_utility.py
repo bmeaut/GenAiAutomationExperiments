@@ -3,7 +3,7 @@ import ast
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.logger import log
+from .logger import log
 
 if TYPE_CHECKING:
     from typing import Any  # TODO: in other files as well?

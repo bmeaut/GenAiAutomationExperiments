@@ -8,8 +8,8 @@ from git import Repo
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from core.logger import log
-from core.ast_utility import ASTUtils
+from .logger import log
+from .ast_utility import ASTUtils
 
 CodeNode = Union[ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef]
 

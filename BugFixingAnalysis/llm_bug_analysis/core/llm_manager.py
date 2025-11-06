@@ -6,7 +6,7 @@ from typing import Any
 from abc import ABC, abstractmethod
 
 from .llm_providers import get_llm_provider, LLMProvider
-from core.logger import log
+from .logger import log
 
 FILE_WRITE_DELAY = 0.5
 

@@ -2,7 +2,7 @@ import shutil
 import atexit
 from pathlib import Path
 
-from core.logger import log
+from .logger import log
 
 # no duplicates
 _active_temp_dirs: set[Path] = set()

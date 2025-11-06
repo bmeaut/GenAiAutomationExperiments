@@ -3,10 +3,13 @@ from tkinter import messagebox, scrolledtext, simpledialog, ttk
 import json
 import threading
 from pathlib import Path
-from core import logger
-from core.pipeline import AnalysisPipeline
-from core.logger import log
-from core.corpus_builder import CorpusBuilder
+
+from ..core import logger
+from ..core.pipeline import AnalysisPipeline
+from ..core.logger import log
+from ..core.corpus_builder import CorpusBuilder
+
+# TODO: add spinner and percentage to corpus building
 
 
 class ANSIColor:
@@ -603,8 +606,8 @@ class BugAnalysisGUI(tk.Frame):
         log(f"  Issue body length: {len(bug.get('issue_body', ''))} chars")
 
         # try to build context with detailed logging
-        from core.project_handler import ProjectHandler
-        from core.context_builder import ContextBuilder
+        from ..core.project_handler import ProjectHandler
+        from ..core.context_builder import ContextBuilder
 
         handler = ProjectHandler(repo_name)
         handler.setup()
@@ -689,6 +692,7 @@ class BugAnalysisGUI(tk.Frame):
         self._set_status(f"Testing: {stage_names[stage]} - {repo_name}:{bug_sha}")
 
         def test_task():
+            final_status = "Task failed"
             self._toggle_controls(is_running=True)
             self._start_spinner(f"{stage_names[stage]}: {repo_name}:{bug_sha}")
 
@@ -730,7 +734,7 @@ class BugAnalysisGUI(tk.Frame):
                     if not patch:
                         return
 
-                    from core.project_handler import ProjectHandler
+                    from ..core.project_handler import ProjectHandler
 
                     self._update_spinner_message(f"Cloning {repo_name}...")
                     handler = ProjectHandler(repo_name)
@@ -780,6 +784,7 @@ class BugAnalysisGUI(tk.Frame):
                 import traceback
 
                 log(traceback.format_exc())
+
             finally:
                 self._stop_spinner()
                 self._toggle_controls(is_running=False)

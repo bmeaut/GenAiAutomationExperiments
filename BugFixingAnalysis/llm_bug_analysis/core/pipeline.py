@@ -15,6 +15,7 @@ from .debug_helper import DebugHelper
 from .patch_evaluator import PatchEvaluator
 from .git_operations import GitOperations
 from .context_builder import ContextBuilder
+from .terminal_manager import TerminalManager
 
 # TODO: add % preview to status bar
 ProgressCallback = Callable[[int, int, str], None]  # current, total, message

@@ -8,9 +8,9 @@ from github.Commit import Commit
 from github.Repository import Repository
 from github.Issue import Issue
 
-from core.logger import log
+from .logger import log
 from .github_client import GitHubClient
-from core.ast_utility import ASTUtils
+from .ast_utility import ASTUtils
 
 
 class DocstringStripper(ast.NodeTransformer):

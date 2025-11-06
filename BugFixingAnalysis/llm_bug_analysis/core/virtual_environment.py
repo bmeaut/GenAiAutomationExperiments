@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from core.logger import log
+from .logger import log
+from .terminal_manager import TerminalManager
 
 if TYPE_CHECKING:
     from .debug_helper import DebugHelper

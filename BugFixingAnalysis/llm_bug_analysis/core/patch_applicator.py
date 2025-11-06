@@ -1,7 +1,7 @@
 from pathlib import Path
 import git
 
-from core.logger import log
+from .logger import log
 
 
 class PatchApplicator:
