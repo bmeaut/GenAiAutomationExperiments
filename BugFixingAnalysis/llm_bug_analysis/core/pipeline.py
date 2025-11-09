@@ -801,6 +801,7 @@ class AnalysisPipeline:
         return {
             "applied_ok": "SKIPPED",
             "tests_passed": "SKIPPED",
+            "test_stats": {"passed": 0, "failed": 0, "skipped": 0, "errors": 0},
             "test_time_seconds": "SKIPPED",
             "complexity": {
                 "total_cc": "SKIPPED",

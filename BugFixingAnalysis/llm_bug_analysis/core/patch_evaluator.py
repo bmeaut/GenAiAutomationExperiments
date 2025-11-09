@@ -120,7 +120,7 @@ class PatchEvaluator:
 
         # run tests
         test_start = time.time()
-        test_ok = handler.venv.run_tests(
+        test_ok, test_stats = handler.venv.run_tests(
             test_command=self.test_command,
             config=self.config,
             repo_name=bug["repo_name"],
@@ -132,6 +132,7 @@ class PatchEvaluator:
 
         return {
             "tests_passed": test_ok,
+            "test_stats": test_stats,
             "test_time_seconds": test_time,
             "complexity": complexity,
             "patch_stats": stats,
@@ -173,6 +174,7 @@ class PatchEvaluator:
             return {
                 "applied_ok": False,
                 "tests_passed": False,
+                "test_stats": {"passed": 0, "failed": 0, "skipped": 0, "errors": 0},
                 "complexity": self.na_complexity(),
                 "patch_stats": patch_stats,
             }
@@ -188,7 +190,7 @@ class PatchEvaluator:
                 self._copy_human_tests_to_ai_workspace(handler, human_sha, test_files)
 
         test_start = time.time()
-        tests_ok = handler.venv.run_tests(
+        tests_ok, test_stats = handler.venv.run_tests(
             test_command=self.test_command,
             config=self.config,
             repo_name=bug["repo_name"],
@@ -203,6 +205,7 @@ class PatchEvaluator:
         return {
             "applied_ok": True,
             "tests_passed": tests_ok,
+            "test_stats": test_stats,
             "test_time_seconds": test_time,
             "complexity": complexity,
             "patch_stats": patch_stats,
@@ -213,6 +216,7 @@ class PatchEvaluator:
         return {
             "applied_ok": False,
             "tests_passed": False,
+            "test_stats": {"passed": 0, "failed": 0, "skipped": 0, "errors": 0},
             "test_time_seconds": 0.0,
             "complexity": {
                 "total_cc": reason,

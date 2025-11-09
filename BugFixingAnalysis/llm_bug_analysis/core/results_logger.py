@@ -27,6 +27,10 @@ class ResultsLogger:
         "complexity_before_total_tokens",
         "llm_patch_applied",
         "llm_tests_passed",
+        "llm_tests_passed_count",
+        "llm_tests_failed_count",
+        "llm_tests_skipped_count",
+        "llm_tests_errors_count",
         "ai_lines_added",
         "ai_lines_deleted",
         "ai_total_diff",
@@ -35,6 +39,10 @@ class ResultsLogger:
         "complexity_after_llm_avg_params",
         "complexity_after_llm_total_tokens",
         "human_tests_passed",
+        "human_tests_passed_count",
+        "human_tests_failed_count",
+        "human_tests_skipped_count",
+        "human_tests_errors_count",
         "human_lines_added",
         "human_lines_deleted",
         "human_total_diff",
@@ -73,8 +81,11 @@ class ResultsLogger:
             llm_metadata = ai_results.get("llm_metadata", {})
             ai_stats = ai_results.get("patch_stats", {})
             ai_comp = ai_results.get("complexity", {})
+            ai_test_stats = ai_results.get("test_stats", {})
+
             human_stats = human_results.get("patch_stats", {})
             human_comp = human_results.get("complexity", {})
+            human_test_stats = human_results.get("test_stats", {})
 
             file_paths_str = "; ".join(bug_data.get("changed_files", []))
 
@@ -99,6 +110,10 @@ class ResultsLogger:
                     comp_before.get("total_tokens"),
                     ai_results.get("applied_ok"),
                     ai_results.get("tests_passed"),
+                    ai_test_stats.get("passed", 0),
+                    ai_test_stats.get("failed", 0),
+                    ai_test_stats.get("skipped", 0),
+                    ai_test_stats.get("errors", 0),
                     ai_stats.get("lines_added", "SKIPPED"),
                     ai_stats.get("lines_deleted", "SKIPPED"),
                     ai_stats.get("total", "SKIPPED"),
@@ -107,6 +122,10 @@ class ResultsLogger:
                     ai_comp.get("avg_params"),
                     ai_comp.get("total_tokens"),
                     human_results.get("tests_passed"),
+                    human_test_stats.get("passed", 0),
+                    human_test_stats.get("failed", 0),
+                    human_test_stats.get("skipped", 0),
+                    human_test_stats.get("errors", 0),
                     human_stats.get("lines_added", "SKIPPED"),
                     human_stats.get("lines_deleted", "SKIPPED"),
                     human_stats.get("total", "SKIPPED"),
