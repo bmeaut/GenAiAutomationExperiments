@@ -47,6 +47,9 @@ class BugAnalysisGUI(tk.Frame):
         self.threaded_mode = tk.StringVar(value="parallel")
         self.parallel_workers = tk.IntVar(value=5)
 
+        self.max_commits_per_repo = tk.IntVar(value=3)
+        self.commit_search_depth = tk.IntVar(value=300)
+
         self.show_logs = tk.BooleanVar(value=False)
 
         self.resume_event = threading.Event()
@@ -104,8 +107,15 @@ class BugAnalysisGUI(tk.Frame):
         repo_frame = tk.LabelFrame(parent, text="Target Repositories")
         repo_frame.pack(fill="x", expand=False, pady=5)
 
-        self.repository_listbox = tk.Listbox(repo_frame)
+        list_frame = tk.Frame(repo_frame)
+        list_frame.pack(side="left", fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+
+        self.repository_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
         self.repository_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.repository_listbox.yview)
 
         button_container = tk.Frame(repo_frame)
         tk.Button(button_container, text="Add", command=self._add_repository).pack(
@@ -263,16 +273,43 @@ class BugAnalysisGUI(tk.Frame):
         self.action_buttons = tk.Frame(parent)
         self.action_buttons.pack(fill="x", expand=True)
 
+        corpus_settings = tk.Frame(self.action_buttons)
+        corpus_settings.pack(fill="x", pady=2)
+
+        corpus_settings = tk.Frame(self.action_buttons)
+        corpus_settings.pack(fill="x", pady=2)
+
         tk.Button(
-            self.action_buttons,
+            corpus_settings,
             text="0. Build Bug Corpus",
             command=self._build_bug_corpus,
-        ).pack(fill="x", padx=5)
+        ).pack(side="left", padx=5)
+
+        tk.Label(corpus_settings, text="Max commits/repo:").pack(
+            side="left", padx=(15, 0)
+        )
+        tk.Spinbox(
+            corpus_settings,
+            from_=1,
+            to=50,
+            textvariable=self.max_commits_per_repo,
+            width=5,
+        ).pack(side="left", padx=2)
+
+        tk.Label(corpus_settings, text="Search depth:").pack(side="left", padx=(10, 0))
+        tk.Spinbox(
+            corpus_settings,
+            from_=50,
+            to=1000,
+            increment=50,
+            textvariable=self.commit_search_depth,
+            width=6,
+        ).pack(side="left", padx=2)
 
         # threaded mode selection
         threaded_mode_frame = tk.Frame(self.action_buttons)
-        threaded_mode_frame.pack(fill="x", pady=2)
-        tk.Label(threaded_mode_frame, text="Threaded mode:").pack(side="left")
+        threaded_mode_frame.pack(fill="x", pady=2, padx=5)
+        tk.Label(threaded_mode_frame, text="Threaded mode:").pack(side="left", padx=5)
         tk.Radiobutton(
             threaded_mode_frame,
             text="Sequential",
@@ -511,14 +548,25 @@ class BugAnalysisGUI(tk.Frame):
         corpus_frame = tk.LabelFrame(parent, text="Bug Corpus")
         corpus_frame.pack(fill="both", expand=True, pady=5)
 
-        self.corpus_listbox = tk.Listbox(corpus_frame, height=8)
+        list_frame = tk.Frame(corpus_frame)
+        list_frame.pack(side="left", fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+
+        self.corpus_listbox = tk.Listbox(
+            list_frame, height=8, yscrollcommand=scrollbar.set
+        )
         self.corpus_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.corpus_listbox.yview)
 
         controls = tk.Frame(corpus_frame)
         tk.Button(
             controls,
             text="Run Selected",
-            command=self._run_selected_bug,
+            command=lambda: self._run_single_stage("full"),
+            bg="#4CAF50",
+            fg="white",
         ).pack(fill="x", pady=2)
         controls.pack(side="right", fill="y", padx=5)
 
@@ -630,7 +678,7 @@ class BugAnalysisGUI(tk.Frame):
         from ..core.project_handler import ProjectHandler
         from ..core.context_builder import ContextBuilder
 
-        handler = ProjectHandler(repo_name)
+        handler = ProjectHandler(repo_name)  # no terminal
         handler.setup()
 
         parent_sha = bug.get("parent_commit_sha")
@@ -729,54 +777,33 @@ class BugAnalysisGUI(tk.Frame):
                     self._update_spinner_message(
                         f"Building context for {repo_name}:{bug_sha}"
                     )
-                    contexts = pipeline._build_contexts_for_repo(
-                        repo_name, [bug], self.stop_event, None
+                    pipeline.run_stage_1_build_contexts(
+                        [bug],  # single bug
+                        self.stop_event,
+                        self._create_progress_updater(),
                     )
-                    self._save_test_result("context", contexts)
 
                 elif stage == 2:
-                    context = self._load_test_context(repo_name, bug_sha)
-                    if not context:
-                        return
-
-                    bug_key = f"{repo_name}_{bug.get('bug_commit_sha', '')[:12]}"
-                    contexts = {bug_key: context}
-
                     self._update_spinner_message(
                         f"Generating patch for {repo_name}:{bug_sha}"
                     )
-                    patches = pipeline._generate_patches_sequential(
-                        contexts, self.stop_event, None
+                    pipeline.run_stage_2_generate_patches(
+                        None,  # load contexts from cache
+                        self.threaded_mode.get(),
+                        self.stop_event,
+                        self._create_progress_updater(),
                     )
-                    self._save_test_result("patch", patches)
 
                 elif stage == 3:
-                    patch = self._load_test_patch(repo_name, bug_sha)
-                    if not patch:
-                        return
-
-                    from ..core.project_handler import ProjectHandler
-
-                    self._update_spinner_message(f"Cloning {repo_name}...")
-                    handler = ProjectHandler(repo_name)
-                    handler.setup()
-
                     self._update_spinner_message(
-                        f"Building environment for {repo_name}..."
+                        f"Testing patch for {repo_name}:{bug_sha}"
                     )
-
-                    if not handler.setup_virtual_environment():
-                        log("ERROR: venv setup failed")
-                        return
-
-                    env_setup_time = handler.venv.get_setup_time()
-
-                    self._update_spinner_message(
-                        f"Environment ready ({env_setup_time:.0f}s), testing..."
+                    pipeline.run_stage_3_test_patches(
+                        None,  # load patches from cache
+                        self.resume_event,
+                        self.stop_event,
+                        self._create_progress_updater(),
                     )
-
-                    pipeline._test_single_patch(patch, handler)
-                    handler.cleanup()
 
                 elif stage == "full":
                     pipeline.run_full_pipeline(
@@ -812,87 +839,6 @@ class BugAnalysisGUI(tk.Frame):
                 self._set_status(final_status)
 
         threading.Thread(target=test_task, daemon=True).start()
-
-    def _save_test_result(self, result_type, data):
-        """Save test result to file for inspection."""
-
-        if not data:
-            log(f"WARNING: No {result_type} data to save")
-            return
-
-        test_dir = self.project_root / "results" / "debug" / "test_single"
-        test_dir.mkdir(parents=True, exist_ok=True)
-
-        if isinstance(data, dict) and data:
-            actual_data = list(data.values())[0]
-        else:
-            actual_data = data
-
-        filename = f"{result_type}.json"
-        filepath = test_dir / filename
-
-        filepath.write_text(json.dumps(actual_data, indent=2, default=str))
-        log(f"Saved to: {filepath}")
-
-    def _load_test_context(self, repo_name, bug_sha):
-        """Load context from test file or stage1 cache."""
-
-        test_file = (
-            self.project_root / "results" / "debug" / "test_single" / "context.json"
-        )
-        if test_file.exists():
-            try:
-                return json.loads(test_file.read_text())
-            except:
-                pass
-
-        stage1_file = (
-            self.project_root / ".cache" / "pipeline_stages" / "stage1_contexts.json"
-        )
-        if stage1_file.exists():
-            try:
-                all_contexts = json.loads(stage1_file.read_text())
-                for key, ctx in all_contexts.items():
-                    if repo_name in key and bug_sha in key:
-                        return ctx
-            except:
-                pass
-
-        messagebox.showerror(
-            "Error",
-            f"No context found for {repo_name}:{bug_sha}\n\n" "Run stage 1 first.",
-        )
-        return None
-
-    def _load_test_patch(self, repo_name, bug_sha):
-        """Load patch from test file or stage2 cache."""
-
-        test_file = (
-            self.project_root / "results" / "debug" / "test_single" / "patch.json"
-        )
-        if test_file.exists():
-            try:
-                return json.loads(test_file.read_text())
-            except:
-                pass
-
-        stage2_file = (
-            self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
-        )
-        if stage2_file.exists():
-            try:
-                all_patches = json.loads(stage2_file.read_text())
-                for key, patch in all_patches.items():
-                    if repo_name in key and bug_sha in key:
-                        return patch
-            except:
-                pass
-
-        messagebox.showerror(
-            "Error",
-            f"No patch found for {repo_name}:{bug_sha}\n\n" "Run stage 2 first.",
-        )
-        return None
 
     def _create_log_viewer(self, parent):
         """Create scrollable log viewer."""
@@ -995,8 +941,9 @@ class BugAnalysisGUI(tk.Frame):
 
             self.llm_provider.set(config.get("llm_provider", "manual"))
             self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
-
             self.parallel_workers.set(config.get("max_parallel_llm", 5))
+            self.max_commits_per_repo.set(config.get("max_commits_per_repo", 3))
+            self.commit_search_depth.set(config.get("commit_search_depth", 300))
 
         except FileNotFoundError:
             log(f"config.json not found at {self.config_path}")
@@ -1017,6 +964,8 @@ class BugAnalysisGUI(tk.Frame):
         config_data["llm_provider"] = self.llm_provider.get()
         config_data["llm_model"] = self.llm_model.get()
         config_data["max_parallel_llm"] = self.parallel_workers.get()
+        config_data["max_commits_per_repo"] = self.max_commits_per_repo.get()
+        config_data["commit_search_depth"] = self.commit_search_depth.get()
 
         self.config_path.write_text(json.dumps(config_data, indent=2))
 
@@ -1196,55 +1145,6 @@ class BugAnalysisGUI(tk.Frame):
         except json.JSONDecodeError:
             self._show_corpus_error("corrupted")
             return False
-
-    # TODO: too similar to _run_full_pipeline, merge later
-    def _run_selected_bug(self):
-        """Run analysis for a selected bug."""
-        selection = self.corpus_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Select a bug from the list first.")
-            return
-
-        if not self._validate_corpus_ready():
-            return
-
-        bug = self.bug_corpus[selection[0]]
-        repo_name = bug.get("repo_name", "unknown")
-        bug_sha = bug.get("bug_commit_sha", "unknown")[:7]
-
-        self._reset_pipeline_state()
-        self._save_configuration()
-
-        mode = self.threaded_mode.get()
-
-        def single_bug_task():
-            self._toggle_controls(is_running=True)
-            self._start_spinner(f"Running {repo_name}:{bug_sha} ({mode})...")
-            try:
-                pipeline = self._create_pipeline()
-                pipeline.run_full_pipeline(
-                    [bug],
-                    mode,
-                    self.resume_event,
-                    self.stop_event,
-                    self._create_progress_updater(),
-                )
-                if self.stop_event.is_set():
-                    final_status = f"{repo_name}:{bug_sha} stopped by user"
-                    log(f">>> {repo_name}:{bug_sha} stopped by user")
-                else:
-                    final_status = f"{repo_name}:{bug_sha} complete!"
-                    log(f">>> {repo_name}:{bug_sha} complete!")
-
-            except Exception as e:
-                final_status = f"ERROR: {repo_name}:{bug_sha} failed: {str(e)[:50]}"
-                log(f"ERROR: {e}")
-            finally:
-                self._stop_spinner()
-                self._toggle_controls(is_running=False)
-                self._set_status(final_status)
-
-        threading.Thread(target=single_bug_task, daemon=True).start()
 
     def _reset_pipeline_state(self):
         """Reset control events for a new run."""
