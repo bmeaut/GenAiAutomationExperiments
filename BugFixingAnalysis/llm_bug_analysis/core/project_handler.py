@@ -11,17 +11,22 @@ from .patch_applicator import PatchApplicator
 from .git_operations import GitOperations
 from .virtual_environment import VirtualEnvironment
 from .debug_helper import DebugHelper
+from .terminal_manager import TerminalManager
 
 
 class ProjectHandler:
     """Coordinates git, venv, and patch operations for a single repo analysis."""
 
-    def __init__(self, repo_name: str):
+    def __init__(self, repo_name: str, terminal_manager: TerminalManager | None = None):
         self.repo_name = repo_name
         self.repo_path = Path(tempfile.mkdtemp())
 
-        self.git_ops = GitOperations(repo_name, self.repo_path)
-        self.venv = VirtualEnvironment(self.repo_path)
+        self.terminal_manager = terminal_manager
+
+        self.git_ops = GitOperations(repo_name, self.repo_path, self.terminal_manager)
+        self.venv = VirtualEnvironment(
+            self.repo_path, self.terminal_manager, repo_name=repo_name
+        )
         self.debug_helper = DebugHelper(self.repo_path)
 
         self.patch_validator = PatchValidator(self.repo_path, None)
@@ -39,11 +44,6 @@ class ProjectHandler:
     def setup_virtual_environment(self) -> bool:
         """Create venv and install dependencies."""
         return self.venv.setup()
-
-    def run_tests(self, test_command: list[str]) -> subprocess.CompletedProcess:
-        """Run tests in the venv."""
-        log(f"  Running: '{' '.join(test_command)}' (via: {self.venv.project_type})")
-        return self.venv.execute_command(test_command)
 
     def checkout(self, commit_sha: str):
         self.git_ops.checkout(commit_sha)

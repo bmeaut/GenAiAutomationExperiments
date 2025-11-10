@@ -306,7 +306,6 @@ class CorpusBuilder:
             if "repositories" not in config:
                 raise KeyError("Missing 'repositories' in config.json")
 
-            # defaults
             config.setdefault("max_commits_per_repo", 3)
             config.setdefault("commit_search_depth", 300)
 
@@ -349,7 +348,6 @@ class CorpusBuilder:
                     log(f"  Searched {max_depth} commits, stopping.")
                     break
 
-                # Process the commit
                 bug_data = analyzer.process_commit(
                     commit, self.config["commit_keywords"]
                 )

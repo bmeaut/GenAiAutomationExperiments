@@ -6,6 +6,7 @@ from typing import Any, Callable
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+from contextlib import contextmanager
 
 from .project_handler import ProjectHandler
 from .analysis import analyze_files
@@ -32,14 +33,20 @@ class AnalysisPipeline:
         debug_on_failure: bool = False,
         llm_provider: str = "gemini",
         llm_model: str = "gemini-2.5-flash",
+        show_terminals: bool = True,
     ):
         """Set up pipeline with config and LLM settings."""
+
         self.config = config
         self.project_root = Path(project_root)
         self.skip_llm_fix = skip_llm_fix
         self.debug_on_failure = debug_on_failure
         self.llm_provider = llm_provider
         self.llm_model = llm_model
+
+        self.terminal_manager = (
+            TerminalManager(project_root) if show_terminals else None
+        )
 
         self.test_command = config.get("test_command", "pytest")
 
@@ -64,6 +71,21 @@ class AnalysisPipeline:
             llm_response_cache_dir=self.llm_response_cache_dir,
         )
 
+    @contextmanager
+    def _terminal_context(self, title: str):
+        """Context manager for terminal lifecycle."""
+        started_here = False
+
+        if self.terminal_manager and not self.terminal_manager.persistent_mode:
+            self.terminal_manager.start_persistent_terminal(title=title)
+            started_here = True
+
+        try:
+            yield
+        finally:
+            if started_here and self.terminal_manager:
+                self.terminal_manager.stop_persistent_terminal()
+
     def _get_bug_cache_path(self, bug: dict[str, Any]) -> Path | None:
         """Get cache file path for a bug."""
         # TODO: from contextbuilder, should restructure?
@@ -81,7 +103,7 @@ class AnalysisPipeline:
 
     def _extract_formatted_context(self, cached_context: dict[str, Any]) -> str:
         """Extract formatted text from cached context."""
-        from core.context_builder import ContextFormatter
+        from .context_builder import ContextFormatter
 
         formatter = ContextFormatter(debug=False)
         return formatter.format(cached_context)
@@ -107,58 +129,62 @@ class AnalysisPipeline:
         log("STAGE 1: Building contexts...")
         log("=" * 60)
 
-        if stop_event is None:
-            stop_event = threading.Event()
+        with self._terminal_context("Stage 1: Building Contexts"):
+            if stop_event is None:
+                stop_event = threading.Event()
 
-        bugs_by_repo = self._group_by_repo(corpus)
-        total_bugs = len(corpus)
-        processed_bugs = 0
+            bugs_by_repo = self._group_by_repo(corpus)
+            total_bugs = len(corpus)
+            processed_bugs = 0
 
-        all_contexts = {}
+            all_contexts = {}
 
-        for repo_idx, (repo_name, bugs) in enumerate(bugs_by_repo.items(), 1):
-            if stop_event.is_set():
-                log("\nWARNING: Stage 1 stopped.")
-                break
+            for repo_idx, (repo_name, bugs) in enumerate(bugs_by_repo.items(), 1):
+                if stop_event.is_set():
+                    log("\nWARNING: Stage 1 stopped.")
+                    break
 
-            log(
-                f"\n[Repo {repo_idx}/{len(bugs_by_repo)}] {repo_name} ({len(bugs)} bugs)"
-            )
-
-            try:
-                repo_contexts = self._build_contexts_for_repo(
-                    repo_name,
-                    bugs,
-                    stop_event,
-                    lambda curr, total, msg: (
-                        progress_callback(processed_bugs + curr, total_bugs, msg)
-                        if progress_callback
-                        else None
-                    ),
+                log(
+                    f"\n[Repo {repo_idx}/{len(bugs_by_repo)}] {repo_name} ({len(bugs)} bugs)"
                 )
 
-                all_contexts.update(repo_contexts)
-                processed_bugs += len(bugs)
+                try:
+                    repo_contexts = self._build_contexts_for_repo(
+                        repo_name,
+                        bugs,
+                        stop_event,
+                        lambda curr, total, msg: (
+                            progress_callback(processed_bugs + curr, total_bugs, msg)
+                            if progress_callback
+                            else None
+                        ),
+                    )
 
+                    all_contexts.update(repo_contexts)
+                    processed_bugs += len(bugs)
+
+                except Exception as e:
+                    log(f"ERROR: in processing {repo_name}: {e}")
+                    processed_bugs += len(bugs)
+
+            log(
+                f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
+            )
+
+            cache_file = (
+                self.project_root
+                / ".cache"
+                / "pipeline_stages"
+                / "stage1_contexts.json"
+            )
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                cache_file.write_text(json.dumps(all_contexts, indent=2, default=str))
+                log(f"Contexts saved to {cache_file}")
             except Exception as e:
-                log(f"ERROR: in processing {repo_name}: {e}")
-                processed_bugs += len(bugs)
+                log(f"ERROR: Failed to save contexts: {e}")
 
-        log(
-            f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
-        )
-
-        cache_file = (
-            self.project_root / ".cache" / "pipeline_stages" / "stage1_contexts.json"
-        )
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            cache_file.write_text(json.dumps(all_contexts, indent=2, default=str))
-            log(f"Contexts saved to {cache_file}")
-        except Exception as e:
-            log(f"ERROR: Failed to save contexts: {e}")
-
-        return all_contexts
+            return all_contexts
 
     def _build_contexts_for_repo(
         self,
@@ -215,65 +241,75 @@ class AnalysisPipeline:
             log(f"  All contexts cached - skipping clone!")
             return contexts
 
-        log(f"  Cloning {repo_name} for {len(uncached_bugs)} uncached bugs...")
+        with self._terminal_context(f"Building Context: {repo_name}"):
+            log(f"  Cloning {repo_name} for {len(uncached_bugs)} uncached bugs...")
 
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"ctx_{repo_name.replace('/', '_')}_"))
+            temp_parent = Path(
+                tempfile.mkdtemp(prefix=f"ctx_{repo_name.replace('/', '_')}_")
+            )
 
-        try:
-            handler = ProjectHandler(repo_name)
-            handler.repo_path = temp_dir
-            handler.git_ops = GitOperations(repo_name, temp_dir)
+            try:
+                repo_dir_name = repo_name.split("/")[
+                    -1
+                ]  # "boltons" from "mahmoud/boltons"
+                actual_repo_path = temp_parent / repo_dir_name
 
-            log(f"  Cloning {repo_name}...")
-            handler.setup()
-            log(f"  Cloned to {temp_dir}")
+                handler = ProjectHandler(repo_name, self.terminal_manager)
+                handler.repo_path = actual_repo_path
+                handler.git_ops = GitOperations(
+                    repo_name, actual_repo_path, self.terminal_manager
+                )
 
-            total = len(uncached_bugs)
-            for i, bug in enumerate(uncached_bugs, 1):
-                if stop_event.is_set():
-                    break
+                log(f"  Cloning {repo_name}...")
+                handler.setup()
+                log(f"  Cloned to {actual_repo_path}")
 
-                bug_sha = bug.get("bug_commit_sha", "unknown")
-                parent_sha = bug.get("parent_commit_sha", "unknown")
-                bug_key = f"{repo_name}_{bug_sha[:12]}"
+                total = len(uncached_bugs)
+                for i, bug in enumerate(uncached_bugs, 1):
+                    if stop_event.is_set():
+                        break
 
-                if progress_callback:
-                    progress_callback(i, total, f"Building context: {bug_key}")
+                    bug_sha = bug.get("bug_commit_sha", "unknown")
+                    parent_sha = bug.get("parent_commit_sha", "unknown")
+                    bug_key = f"{repo_name}_{bug_sha[:12]}"
 
-                log(f"  [{i}/{total}] {bug_sha[:7]}")
+                    if progress_callback:
+                        progress_callback(i, total, f"Building context: {bug_key}")
 
-                try:
-                    changed_files = bug.get("changed_files", [])
-                    if not changed_files:
-                        log(f"    No Python files changed (check corpus.json).")
-                        continue
+                    log(f"  [{i}/{total}] {bug_sha[:7]}")
 
-                    handler.checkout(parent_sha)
+                    try:
+                        changed_files = bug.get("changed_files", [])
+                        if not changed_files:
+                            log(f"    No Python files changed (check corpus.json).")
+                            continue
 
-                    builder = ContextBuilder(
-                        repo_path=handler.repo_path,
-                        max_snippets=5,
-                        debug=True,
-                        cache_dir=self.context_cache_dir,
-                    )
+                        handler.checkout(parent_sha)
 
-                    context, context_text = builder.build_and_format(bug)
+                        builder = ContextBuilder(
+                            repo_path=handler.repo_path,
+                            max_snippets=5,
+                            debug=True,
+                            cache_dir=self.context_cache_dir,
+                        )
 
-                    contexts[bug_key] = {
-                        "bug": bug,
-                        "formatted_context": context_text,
-                        "changed_files": changed_files,
-                    }
+                        context, context_text = builder.build_and_format(bug)
 
-                    log(f"    Context built ({len(context_text)} chars)")
+                        contexts[bug_key] = {
+                            "bug": bug,
+                            "formatted_context": context_text,
+                            "changed_files": changed_files,
+                        }
 
-                except Exception as e:
-                    log(f"    FAIL: {e}")
+                        log(f"    Context built ({len(context_text)} chars)")
 
-        finally:
-            if temp_dir.exists():
-                log(f"  Cleaning up {temp_dir}")
-                shutil.rmtree(temp_dir, ignore_errors=True)
+                    except Exception as e:
+                        log(f"    FAIL: {e}")
+
+            finally:
+                if temp_parent.exists():
+                    log(f"  Cleaning up {temp_parent}")
+                    shutil.rmtree(temp_parent, ignore_errors=True)
 
         return contexts
 
@@ -480,111 +516,114 @@ class AnalysisPipeline:
         log("STAGE 3: Testing patches...")
         log("=" * 60)
 
-        if resume_event is None:
-            resume_event = threading.Event()
-            resume_event.set()
-        if stop_event is None:
-            stop_event = threading.Event()
+        with self._terminal_context("Stage 3: Testing Patches"):
+            if resume_event is None:
+                resume_event = threading.Event()
+                resume_event.set()
+            if stop_event is None:
+                stop_event = threading.Event()
 
-        # load patches if not provided
-        if patches is None:
+            # load patches if not provided
+            if patches is None:
 
-            if self.skip_llm_fix:
-                log("Skip mode: Loading contexts from Stage 1...")
-                cache_file = (
-                    self.project_root
-                    / ".cache"
-                    / "pipeline_stages"
-                    / "stage1_contexts.json"
-                )
-                if not cache_file.exists():
-                    log("ERROR: No contexts found!")
-                    log("   Run Stage 1 to build contexts first.")
-                    return
-
-                try:
-                    contexts = json.loads(cache_file.read_text())
-                    if not isinstance(contexts, dict):
-                        log("ERROR: Invalid contexts format")
+                if self.skip_llm_fix:
+                    log("Skip mode: Loading contexts from Stage 1...")
+                    cache_file = (
+                        self.project_root
+                        / ".cache"
+                        / "pipeline_stages"
+                        / "stage1_contexts.json"
+                    )
+                    if not cache_file.exists():
+                        log("ERROR: No contexts found!")
+                        log("   Run Stage 1 to build contexts first.")
                         return
 
-                    patches = {
-                        bug_key: {
-                            "bug": ctx_data["bug"],
-                            "llm_result": None,  # no llm stuff in skip mode
-                            "changed_files": ctx_data.get("changed_files", []),
-                        }
-                        for bug_key, ctx_data in contexts.items()
-                    }
-                    log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
+                    try:
+                        contexts = json.loads(cache_file.read_text())
+                        if not isinstance(contexts, dict):
+                            log("ERROR: Invalid contexts format")
+                            return
 
-                except Exception as e:
-                    log(f"ERROR: Failed to load contexts: {e}")
-                    return
+                        patches = {
+                            bug_key: {
+                                "bug": ctx_data["bug"],
+                                "llm_result": None,  # no llm stuff in skip mode
+                                "changed_files": ctx_data.get("changed_files", []),
+                            }
+                            for bug_key, ctx_data in contexts.items()
+                        }
+                        log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
+
+                    except Exception as e:
+                        log(f"ERROR: Failed to load contexts: {e}")
+                        return
+
+                else:
+                    cache_file = (
+                        self.project_root
+                        / ".cache"
+                        / "pipeline_stages"
+                        / "stage2_patches.json"
+                    )
+                    if not cache_file.exists():
+                        log("ERROR: No patches found!")
+                        log("   Run Stage 2 to generate patches.")
+                        return
+
+                    try:
+                        patches = json.loads(cache_file.read_text())
+                        if not isinstance(patches, dict):
+                            log("ERROR: Invalid patches format")
+                            return
+                        log(f"Loaded {len(patches)} patches from cache")
+                    except Exception as e:
+                        log(f"ERROR: Failed to load patches: {e}")
+                        return
 
             else:
-                cache_file = (
-                    self.project_root
-                    / ".cache"
-                    / "pipeline_stages"
-                    / "stage2_patches.json"
-                )
-                if not cache_file.exists():
-                    log("ERROR: No patches found!")
-                    log("   Run Stage 2 to generate patches.")
+                if not isinstance(patches, dict):
+                    log("ERROR: Invalid patches format")
                     return
+
+            patches_by_repo = self._group_patches_by_repo(patches)
+
+            total_repos = len(patches_by_repo)
+            total_patches = len(patches)
+            processed_patches = 0
+
+            for repo_idx, (repo_name, repo_patches) in enumerate(
+                patches_by_repo.items(), 1
+            ):
+                if stop_event.is_set():
+                    log("\nWARNING: Stage 3 stopped.")
+                    break
+
+                log(
+                    f"\n[Repo {repo_idx}/{total_repos}] {repo_name} ({len(repo_patches)} patches)"
+                )
 
                 try:
-                    patches = json.loads(cache_file.read_text())
-                    if not isinstance(patches, dict):
-                        log("ERROR: Invalid patches format")
-                        return
-                    log(f"Loaded {len(patches)} patches from cache")
+                    self._test_patches_for_repo(
+                        repo_name,
+                        repo_patches,
+                        resume_event,
+                        stop_event,
+                        lambda curr, total, msg: (
+                            progress_callback(
+                                processed_patches + curr, total_patches, msg
+                            )
+                            if progress_callback
+                            else None
+                        ),
+                    )
+                    processed_patches += len(repo_patches)
+
                 except Exception as e:
-                    log(f"ERROR: Failed to load patches: {e}")
-                    return
+                    log(f"ERROR: {e}")
+                    processed_patches += len(repo_patches)
 
-        else:
-            if not isinstance(patches, dict):
-                log("ERROR: Invalid patches format")
-                return
-
-        patches_by_repo = self._group_patches_by_repo(patches)
-
-        total_repos = len(patches_by_repo)
-        total_patches = len(patches)
-        processed_patches = 0
-
-        for repo_idx, (repo_name, repo_patches) in enumerate(
-            patches_by_repo.items(), 1
-        ):
-            if stop_event.is_set():
-                log("\nWARNING: Stage 3 stopped.")
-                break
-
-            log(
-                f"\n[Repo {repo_idx}/{total_repos}] {repo_name} ({len(repo_patches)} patches)"
-            )
-
-            try:
-                self._test_patches_for_repo(
-                    repo_name,
-                    repo_patches,
-                    resume_event,
-                    stop_event,
-                    lambda curr, total, msg: (
-                        progress_callback(processed_patches + curr, total_patches, msg)
-                        if progress_callback
-                        else None
-                    ),
-                )
-                processed_patches += len(repo_patches)
-
-            except Exception as e:
-                log(f"ERROR: {e}")
-                processed_patches += len(repo_patches)
-
-        log(f"\nSUCCESS: Stage 3 complete: {processed_patches} patches tested")
+            log(f"\nSUCCESS: Stage 3 complete: {processed_patches} patches tested")
 
     def _group_patches_by_repo(
         self,
@@ -615,7 +654,7 @@ class AnalysisPipeline:
         if progress_callback:
             progress_callback(0, len(repo_patches), f"Cloning {repo_name}...")
 
-        handler = ProjectHandler(repo_name)
+        handler = ProjectHandler(repo_name, self.terminal_manager)
 
         try:
             log(f"  Cloning {repo_name}...")
@@ -747,30 +786,35 @@ class AnalysisPipeline:
         log(f"   LLM Mode: {threaded_mode.upper()}")
         log("=" * 60)
 
-        log("\nStage 1/3: Building contexts...")
-        contexts = self.run_stage_1_build_contexts(
-            corpus, stop_event, progress_callback
-        )
-        if stop_event and stop_event.is_set():
-            log("Pipeline stopped after Stage 1")
-            return
+        with self._terminal_context("LLM Bug Analysis Pipeline"):
+            log("\nStage 1/3: Building contexts...")
+            contexts = self.run_stage_1_build_contexts(
+                corpus, stop_event, progress_callback
+            )
+            if stop_event and stop_event.is_set():
+                log("Pipeline stopped after Stage 1")
+                return
 
-        log("\nStage 2/3: Generating patches...")
-        patches = self.run_stage_2_generate_patches(
-            contexts, threaded_mode, stop_event, progress_callback
-        )
-        if stop_event and stop_event.is_set():
-            log("Pipeline stopped after Stage 2")
-            return
+            log("\nStage 2/3: Generating patches...")
+            if self.skip_llm_fix:
+                log("DRY RUN: Skipping patch generation")
+                patches = None  # will load contexts in stage 3
+            else:
+                patches = self.run_stage_2_generate_patches(
+                    contexts, threaded_mode, stop_event, progress_callback
+                )
+            if stop_event and stop_event.is_set():
+                log("Pipeline stopped after Stage 2")
+                return
 
-        log("\nStage 3/3: Testing patches...")
-        self.run_stage_3_test_patches(
-            patches, resume_event, stop_event, progress_callback
-        )
+            log("\nStage 3/3: Testing patches...")
+            self.run_stage_3_test_patches(
+                patches, resume_event, stop_event, progress_callback
+            )
 
-        log("\n" + "=" * 60)
-        log("SUCCESS: Pipeline complete")
-        log("=" * 60)
+            log("\n" + "=" * 60)
+            log("SUCCESS: Pipeline complete")
+            log("=" * 60)
 
     def _analyze_before(
         self,

@@ -9,16 +9,38 @@ from .terminal_manager import TerminalManager
 class GitOperations:
     """Handles git CLI operations."""
 
-    def __init__(self, repo_name: str, repo_path: Path):
+    def __init__(
+        self,
+        repo_name: str,
+        repo_path: Path,
+        terminal_manager: TerminalManager | None = None,
+    ):
         self.repo_name = repo_name
         self.repo_url = f"https://github.com/{repo_name}.git"
         self.repo_path = Path(repo_path)
         self.repo: Repo | None = None
+        self.terminal_manager = terminal_manager
 
     def clone_repository(self):
         """Clone the repository with full history."""
-        log(f"  Cloning {self.repo_url} into {self.repo_path}")
-        self.repo = Repo.clone_from(self.repo_url, self.repo_path)
+
+        parent_dir = self.repo_path.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.terminal_manager:
+            log(f"  Cloning {self.repo_name}...")
+            self.terminal_manager.queue_command(
+                ["git", "clone", "--progress", self.repo_url, str(self.repo_path)],
+                title=f"Cloning {self.repo_name}",
+                cwd=parent_dir,
+                timeout=600,
+            )
+
+            self.repo = Repo(self.repo_path)
+
+        else:
+            log(f"  Cloning {self.repo_url} into {self.repo_path}")
+            self.repo = Repo.clone_from(self.repo_url, self.repo_path)
 
         log("  --> Fetching full history...")
         try:

@@ -2,7 +2,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,10 +15,13 @@ if TYPE_CHECKING:
 class VirtualEnvironment:
     """Creates and manages venv for repo."""
 
-    def __init__(self, repo_path: Path):
+    def __init__(
+        self, repo_path: Path, terminal_manager: TerminalManager | None = None
+    ):
         self.repo_path = Path(repo_path)
-        self.venv_path = self.repo_path / "venv"
+        self.venv_path = self.repo_path / ".venv"
         self.project_type = "pip"
+        self.terminal_manager = terminal_manager
 
     def setup(self) -> bool:
         """Create venv and install dependencies."""
@@ -35,12 +37,12 @@ class VirtualEnvironment:
             self._detect_project_type()
             log(f"  --> Detected: {self.project_type}")
 
-            log("  --> Installing build & test tools...")
-            self._install_core_tools()
-            log("      --> Done.")
-
             log("  Installing project dependencies...")
             self._install_dependencies()
+            log("      --> Done.")
+
+            log("  --> Installing build & test tools...")
+            self._install_core_tools()
             log("      --> Done.")
 
             setup_time = time.time() - start_time

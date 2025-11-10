@@ -39,6 +39,7 @@ class BugAnalysisGUI(tk.Frame):
         # analysis options
         self.dry_run_enabled = tk.BooleanVar(value=False)
         self.debug_mode_enabled = tk.BooleanVar(value=False)
+        self.show_terminals = tk.BooleanVar(value=True)
 
         self.llm_provider = tk.StringVar(value="manual")
         self.llm_model = tk.StringVar(value="gemini-2.5-flash")
@@ -170,6 +171,12 @@ class BugAnalysisGUI(tk.Frame):
             options,
             text="Pause on Failure (Debug)",
             variable=self.debug_mode_enabled,
+        ).pack(side="left", padx=10)
+
+        tk.Checkbutton(
+            options,
+            text="Show Terminals",
+            variable=self.show_terminals,
         ).pack(side="left", padx=10)
 
         tk.Checkbutton(
@@ -430,17 +437,30 @@ class BugAnalysisGUI(tk.Frame):
         mode = self.threaded_mode.get()
 
         def pipeline_task():
+            final_status = "Pipeline failed"
             self._toggle_controls(is_running=True)
             self._start_spinner(f"Running full pipeline ({mode})...")
             try:
                 pipeline = self._create_pipeline()
-                pipeline.run_full_pipeline(
-                    self.bug_corpus,
-                    mode,
-                    self.resume_event,
-                    self.stop_event,
-                    self._create_progress_updater(),
-                )
+
+                if pipeline.terminal_manager:
+                    with pipeline.terminal_manager:
+                        pipeline.run_full_pipeline(
+                            self.bug_corpus,
+                            mode,
+                            self.resume_event,
+                            self.stop_event,
+                            self._create_progress_updater(),
+                        )
+                else:
+                    pipeline.run_full_pipeline(
+                        self.bug_corpus,
+                        mode,
+                        self.resume_event,
+                        self.stop_event,
+                        self._create_progress_updater(),
+                    )
+
                 if self.stop_event.is_set():
                     final_status = "Full pipeline stopped by user"
                     log(">>> Full pipeline stopped by user")
@@ -464,12 +484,13 @@ class BugAnalysisGUI(tk.Frame):
         config["max_parallel_llm"] = self.parallel_workers.get()
 
         return AnalysisPipeline(
-            config,
-            self.project_root,
+            config=config,
+            project_root=self.project_root,
             skip_llm_fix=self.dry_run_enabled.get(),
             debug_on_failure=self.debug_mode_enabled.get(),
             llm_provider=self.llm_provider.get(),
             llm_model=self.llm_model.get(),
+            show_terminals=self.show_terminals.get(),
         )
 
     def _create_progress_updater(self):
