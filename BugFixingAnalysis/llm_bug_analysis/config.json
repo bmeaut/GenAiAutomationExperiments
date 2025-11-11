@@ -24,7 +24,15 @@
     "https://github.com/pytest-dev/pytest-asyncio",
     "https://github.com/rubik/radon",
     "https://github.com/theskumar/python-dotenv",
-    "https://github.com/python-poetry/poetry"
+    "https://github.com/python-poetry/poetry",
+    "https://github.com/astropy/astropy",
+    "https://github.com/django/django",
+    "https://github.com/matplotlib/matplotlib",
+    "https://github.com/mwaskom/seaborn",
+    "https://github.com/pylint-dev/pylint",
+    "https://github.com/scikit-learn/scikit-learn",
+    "https://github.com/sphinx-doc/sphinx",
+    "https://github.com/sympy/sympy"
   ],
   "stashed_repositories": [
     "https://github.com/mahmoud/boltons",
@@ -51,7 +59,28 @@
     "https://github.com/pytest-dev/pytest-asyncio",
     "https://github.com/rubik/radon",
     "https://github.com/theskumar/python-dotenv",
-    "https://github.com/python-poetry/poetry"
+    "https://github.com/python-poetry/poetry",
+    "https://github.com/astropy/astropy",
+    "https://github.com/django/django",
+    "https://github.com/matplotlib/matplotlib",
+    "https://github.com/mwaskom/seaborn",
+    "https://github.com/pylint-dev/pylint",
+    "https://github.com/scikit-learn/scikit-learn",
+    "https://github.com/sphinx-doc/sphinx",
+    "https://github.com/sympy/sympy"
+  ],
+  "swebench_repositories": [
+    "https://github.com/astropy/astropy",
+    "https://github.com/django/django",
+    "https://github.com/matplotlib/matplotlib",
+    "https://github.com/mwaskom/seaborn",
+    "https://github.com/pallets/flask",
+    "https://github.com/psf/requests",
+    "https://github.com/pytest-dev/pytest",
+    "https://github.com/pylint-dev/pylint",
+    "https://github.com/scikit-learn/scikit-learn",
+    "https://github.com/sphinx-doc/sphinx",
+    "https://github.com/sympy/sympy"
   ],
   "commit_keywords": [
     "fix",
@@ -170,7 +199,7 @@
   ],
   "test_command": "python -m pytest",
   "max_commits_per_repo": 1,
-  "commit_search_depth": 300,
+  "commit_search_depth": 600,
   "llm_provider": "gemini",
   "llm_model": "gemini-2.5-pro",
   "test_exclusions": {
