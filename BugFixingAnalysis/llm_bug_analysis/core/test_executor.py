@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
@@ -50,6 +51,19 @@ class TestExecutor:
         self, test_command: str, config: dict, repo_name: str
     ) -> list[str]:
         """Build test command with all configurations applied."""
+
+        if self._is_django_core():
+            python_path = str(self.venv_path / "bin" / "python")
+            log("    --> Django core detected, using runtests.py")
+            return [
+                python_path,
+                "runtests.py",
+                "--settings",
+                "test_sqlite",
+                "--parallel",
+                "1",
+            ]
+
         cmd = test_command.split()
 
         # transformations in order
@@ -57,8 +71,41 @@ class TestExecutor:
         cmd = self._add_repo_exclusions(cmd, config, repo_name)
         cmd = self._add_global_ignores(cmd)
         cmd = self._add_test_directory_if_needed(cmd)
+        cmd = self._add_pytest_xdist_if_available(cmd)
 
         return cmd
+
+    def _add_pytest_xdist_if_available(self, cmd: list[str]) -> list[str]:
+        """Add pytest-xdist parallel running if installed."""
+
+        if "-m" not in cmd or "pytest" not in cmd:
+            return cmd
+
+        if any(arg.startswith("-n") or arg == "-n" for arg in cmd):
+            log("    --> pytest-xdist already configured")
+            return cmd
+
+        if not self._has_pytest_xdist():
+            return cmd
+
+        cmd.extend(["-n", "6"])
+        log(f"    --> pytest-xdist detected, using 6 workers")
+
+        return cmd
+
+    def _has_pytest_xdist(self) -> bool:
+        """Check if pytest-xdist is installed in venv."""
+        try:
+            python_path = self.venv_path / "bin" / "python"
+            result = subprocess.run(
+                [str(python_path), "-c", "import xdist"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
     def _fix_python_path(self, cmd: list[str]) -> list[str]:
         """Replace 'python' with venv python path."""
@@ -131,7 +178,7 @@ class TestExecutor:
 
     def _build_test_environment(self) -> dict[str, str]:
         """Build environment for test execution."""
-        return {
+        env = {
             "VIRTUAL_ENV": str(self.venv_path),
             "PATH": os.pathsep.join(
                 [
@@ -143,6 +190,11 @@ class TestExecutor:
                 ]
             ),
         }
+
+        if self._is_django_core():
+            env["DJANGO_SETTINGS_MODULE"] = "test_sqlite"
+
+        return env
 
     def _run_test_command(
         self,
@@ -178,10 +230,12 @@ class TestExecutor:
 
         title = f"Test_{run_type}_{commit_sha[:7]}"
 
+        cwd = self.repo_path / "tests" if self._is_django_core() else self.repo_path
+
         process = self.terminal_manager.queue_command(
             cmd,
             title=title,
-            cwd=self.repo_path,
+            cwd=cwd,
             timeout=1200,
             env=env,
             repo_name=self.repo_name,
@@ -223,9 +277,11 @@ class TestExecutor:
             full_env.update(env)
             full_env.pop("PYTHONHOME", None)
 
+            cwd = self.repo_path / "tests" if self._is_django_core() else self.repo_path
+
             result = subprocess.run(
                 cmd,
-                cwd=self.repo_path,
+                cwd=cwd,
                 env=full_env,
                 capture_output=True,
                 text=True,
@@ -385,3 +441,10 @@ class TestExecutor:
             return True
 
         return False
+
+    def _is_django_core(self) -> bool:
+        indicators = [
+            (self.repo_path / "django" / "__init__.py").exists(),
+            (self.repo_path / "tests" / "runtests.py").exists(),
+        ]
+        return any(indicators)

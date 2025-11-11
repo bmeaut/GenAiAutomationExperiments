@@ -42,9 +42,6 @@ class PatchEvaluator:
         """Evaluate pre-generated AI fix from stage 2."""
         log("  Evaluating AI Fix with AAG/RAG...")
 
-        # start at buggy state
-        handler.checkout(parent_sha)
-
         # TODO: validate LLM results, here or somewhere else?
         if not llm_fix or not llm_fix.get("intent"):
             log("  --> ERROR: Invalid or missing llm_fix from stage 2.")

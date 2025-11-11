@@ -19,7 +19,11 @@ class ProjectHandler:
 
     def __init__(self, repo_name: str, terminal_manager: TerminalManager | None = None):
         self.repo_name = repo_name
-        self.repo_path = Path(tempfile.mkdtemp())
+
+        # "pallets/flask" -> /tmp/tmpxxx/flask/
+        self.temp_parent = Path(tempfile.mkdtemp())
+        repo_dir_name = repo_name.split("/")[-1]
+        self.repo_path = self.temp_parent / repo_dir_name
 
         self.terminal_manager = terminal_manager
 
@@ -32,11 +36,15 @@ class ProjectHandler:
         self.patch_validator = PatchValidator(self.repo_path, None)
         self.patch_applicator = PatchApplicator(None)
 
-        cleanup_manager.register_temp_dir(self.repo_path)
+        cleanup_manager.register_temp_dir(self.temp_parent)
 
     def setup(self):
         """Clone repo and setup git operations."""
         self.git_ops.clone_repository()
+
+        self.venv = VirtualEnvironment(
+            self.repo_path, self.terminal_manager, repo_name=self.repo_name
+        )
 
         self.patch_validator.repo = self.git_ops.repo
         self.patch_applicator.repo = self.git_ops.repo
@@ -93,6 +101,6 @@ class ProjectHandler:
 
     def cleanup(self):
         """Delete temp directory."""
-        log(f"  Cleaning up: {self.repo_path}")
-        shutil.rmtree(self.repo_path, ignore_errors=True)
-        cleanup_manager.unregister_temp_dir(self.repo_path)
+        log(f"  Cleaning up: {self.temp_parent}")
+        shutil.rmtree(self.temp_parent, ignore_errors=True)
+        cleanup_manager.unregister_temp_dir(self.temp_parent)

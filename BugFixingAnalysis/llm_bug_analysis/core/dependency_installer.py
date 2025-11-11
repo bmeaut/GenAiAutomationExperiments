@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
@@ -86,16 +87,26 @@ class DependencyInstaller:
 
     def _install_requirements_if_exists(self):
         """Install from *requirements*.txt if it exists."""
-        req = self._find_requirements()
-        if not req:
+        requirements = self._find_all_requirements()
+        if not requirements:
+            log("  --> No requirements files found")
             return
 
-        log(f"  Found: '{req.name}', installing dependencies...")
+        for req_file in requirements:
+            rel_path = req_file.relative_to(self.repo_path)
+            log(f"  Installing from: '{rel_path}'...")
+            self._install_single_requirements_file(req_file)
+
+    def _install_single_requirements_file(self, req_file: Path):
+        """Install dependencies from a single requirements file."""
         uv_path = self._get_uv_path()
         python_path = str(self.venv_path / "bin" / "python")
 
-        cmd = [uv_path, "pip", "install", "--python", python_path, "-r", str(req)]
-        title = f"uv pip install requirements: {self.repo_path.name}"
+        cmd = [uv_path, "pip", "install", "--python", python_path, "-r", str(req_file)]
+
+        rel_path = req_file.relative_to(self.repo_path)
+        title = f"uv pip install -r {rel_path}: {self.repo_path.name}"
+
         self._execute_install(cmd, title)
 
     def _install_package_if_exists(self):
@@ -117,11 +128,14 @@ class DependencyInstaller:
 
     def _build_install_spec(self, pyproject_path: Path) -> str:
         """Build the install specification (e.g., '.[test,dev]')."""
-        has_dep_groups = self._check_dependency_groups(pyproject_path)
+        if not pyproject_path.exists():
+            return "."
+
+        dep_groups = self._check_dependency_groups(pyproject_path)
         available_extras = self._get_available_extras(pyproject_path)
 
         # dependency-groups
-        if has_dep_groups:
+        if dep_groups:
             if available_extras:
                 extras_str = ",".join(available_extras)
                 log(f"  --> Also installing extras: {extras_str}")
@@ -144,12 +158,18 @@ class DependencyInstaller:
 
         cmd = [uv_path, "pip", "install", "--python", python_path, "-e", install_spec]
 
-        has_dep_groups = self._check_dependency_groups(pyproject_path)
-        if has_dep_groups:
-            cmd.extend(["--group", "test"])
-            title = f"uv pip install package (dep-groups): {self.repo_path.name}"
-        elif "[" in install_spec:
-            title = f"uv pip install package (extras): {self.repo_path.name}"
+        if pyproject_path.exists():
+            dep_groups = self._check_dependency_groups(pyproject_path)
+            test_groups = ["test", "tests", "testing", "dev"]
+            found_groups = [g for g in test_groups if g in dep_groups]
+            if found_groups:
+                for group in found_groups:
+                    cmd.extend(["--group", group])
+                title = f"uv pip install package (dep-groups): {self.repo_path.name}"
+            elif "[" in install_spec:
+                title = f"uv pip install package (extras): {self.repo_path.name}"
+            else:
+                title = f"uv pip install package: {self.repo_path.name}"
         else:
             title = f"uv pip install package: {self.repo_path.name}"
 
@@ -299,7 +319,7 @@ class DependencyInstaller:
             log(f"  --> Error reading extras: {e}")
             return []
 
-    def _check_dependency_groups(self, pyproject_path: Path) -> bool:
+    def _check_dependency_groups(self, pyproject_path: Path) -> list[str]:
         """Check if pyproject.toml has [dependency-groups]."""
         try:
             import tomllib
@@ -307,7 +327,7 @@ class DependencyInstaller:
             try:
                 import tomli as tomllib
             except ImportError:
-                return False
+                return []
 
         try:
             with open(pyproject_path, "rb") as f:
@@ -316,17 +336,23 @@ class DependencyInstaller:
             if "dependency-groups" in data:
                 groups = list(data["dependency-groups"].keys())
                 log(f"  --> Found dependency-groups: {groups}")
-                return True
+                return groups
 
-            return False
+            return []
 
         except Exception as e:
             log(f"  --> Error checking dependency-groups: {e}")
-            return False
+            return []
 
-    def _find_requirements(self) -> Path | None:
-        """Find requirements file."""
+    def _find_all_requirements(self) -> list[Path]:
+        """Find all requirements files."""
+        found = []
+        searched_patterns = []
         patterns = [
+            "requirements/py*.txt",
+            "tests/requirements/py*.txt",
+            "requirements/dev.txt",
+            "requirements/testing.txt",
             "*requirements-dev.txt",
             "*requirements_dev.txt",
             "*requirements-test*.txt",
@@ -335,13 +361,25 @@ class DependencyInstaller:
         ]
 
         for pattern in patterns:
-            for match in self.repo_path.glob(pattern):
-                return match
+            matches = list(self.repo_path.glob(pattern))
+            searched_patterns.append(pattern)
+
+            for match in matches:
+                if match not in found:
+                    found.append(match)
 
         req_dir = self.repo_path / "requirements"
-        if req_dir.exists():
+        if req_dir.exists() and req_dir.is_dir():
             for pattern in patterns:
-                for match in req_dir.glob(pattern):
-                    return match
+                matches = list(req_dir.glob(pattern))
+                for match in matches:
+                    if match not in found:
+                        found.append(match)
 
-        return None
+        if found:
+            log(f"  --> Found {len(found)} requirements file(s):")
+            for req_file in found:
+                rel_path = req_file.relative_to(self.repo_path)
+                log(f"      - {rel_path}")
+
+        return found

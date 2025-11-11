@@ -29,6 +29,7 @@ dev = [
     "pytest-cov",
     "pytest-mock",
     "pytest-sugar",
+    "pytest-xdist",
 ]
 
 [tool.pytest.ini_options]

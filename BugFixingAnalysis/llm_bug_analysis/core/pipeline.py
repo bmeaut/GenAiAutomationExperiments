@@ -1,6 +1,4 @@
 import json
-import shutil
-import tempfile
 from pathlib import Path
 from typing import Any, Callable
 import threading
@@ -19,7 +17,7 @@ from .context_builder import ContextBuilder
 from .terminal_manager import TerminalManager
 
 # TODO: add % preview to status bar
-ProgressCallback = Callable[[int, int, str], None]  # current, total, message
+ProgressCallback = Callable[[int, int, str], None]
 
 
 class AnalysisPipeline:
@@ -244,25 +242,12 @@ class AnalysisPipeline:
         with self._terminal_context(f"Building Context: {repo_name}"):
             log(f"  Cloning {repo_name} for {len(uncached_bugs)} uncached bugs...")
 
-            temp_parent = Path(
-                tempfile.mkdtemp(prefix=f"ctx_{repo_name.replace('/', '_')}_")
-            )
+            handler = ProjectHandler(repo_name, self.terminal_manager)
 
             try:
-                repo_dir_name = repo_name.split("/")[
-                    -1
-                ]  # "boltons" from "mahmoud/boltons"
-                actual_repo_path = temp_parent / repo_dir_name
-
-                handler = ProjectHandler(repo_name, self.terminal_manager)
-                handler.repo_path = actual_repo_path
-                handler.git_ops = GitOperations(
-                    repo_name, actual_repo_path, self.terminal_manager
-                )
-
                 log(f"  Cloning {repo_name}...")
                 handler.setup()
-                log(f"  Cloned to {actual_repo_path}")
+                log(f"  Cloned to {handler.repo_path}")
 
                 total = len(uncached_bugs)
                 for i, bug in enumerate(uncached_bugs, 1):
@@ -307,9 +292,7 @@ class AnalysisPipeline:
                         log(f"    FAIL: {e}")
 
             finally:
-                if temp_parent.exists():
-                    log(f"  Cleaning up {temp_parent}")
-                    shutil.rmtree(temp_parent, ignore_errors=True)
+                handler.cleanup()
 
         return contexts
 
@@ -660,30 +643,8 @@ class AnalysisPipeline:
             log(f"  Cloning {repo_name}...")
             handler.setup()
 
-            if progress_callback:
-                progress_callback(
-                    0, len(repo_patches), f"Setting up env for {repo_name}..."
-                )
-
-            log(f"Building virtual environment...")
-            if not handler.setup_virtual_environment():
-                log(f"ERROR: venv setup failed - skipping {repo_name}")
-                return
-
-            env_setup_time = handler.venv.get_setup_time()
-
-            if progress_callback:
-                progress_callback(
-                    0,
-                    len(repo_patches),
-                    f"Env ready ({env_setup_time:.0f}s), testing {repo_name}...",
-                )
-
-            log(
-                f"Environment ready in {env_setup_time:.1f}s, testing {len(repo_patches)} patches"
-            )
-
             total = len(repo_patches)
+            prev_commit_sha = None
             for i, patch_data in enumerate(repo_patches, 1):
                 if stop_event.is_set():
                     break
@@ -698,6 +659,7 @@ class AnalysisPipeline:
                     continue
 
                 bug_sha = bug.get("bug_commit_sha", "unknown")
+                parent_sha = bug.get("parent_commit_sha", "unknown")
 
                 if progress_callback:
                     progress_callback(
@@ -705,6 +667,27 @@ class AnalysisPipeline:
                     )
 
                 log(f"\n  [{i}/{total}] {bug_sha[:7]}")
+
+                log(f"  Checking out parent commit {parent_sha[:7]}...")
+                handler.checkout(parent_sha)
+
+                # setup venv if commit changed or first time
+                if prev_commit_sha != parent_sha:
+                    log(f"  Building virtual environment at {parent_sha[:7]}...")
+
+                    if not handler.setup_virtual_environment():
+                        log(f"  ERROR: venv setup failed at {parent_sha[:7]}")
+                        log(f"  Skipping remaining patches for this commit")
+                        # skip to next different commit
+                        continue
+
+                    env_setup_time = handler.venv.get_setup_time()
+                    log(f"  Environment ready in {env_setup_time:.1f}s")
+
+                    prev_commit_sha = parent_sha
+
+                else:
+                    log(f"  Using existing venv (same commit as previous)")
 
                 self._test_single_patch(patch_data, handler)
 
@@ -824,7 +807,6 @@ class AnalysisPipeline:
     ) -> dict[str, Any]:
         """Measure complexity before the fix."""
         log("  Analyzing 'before' state...")
-        handler.checkout(parent_sha)
 
         repo_path = Path(handler.repo_path)
         existing = [f for f in changed_files if (repo_path / f).exists()]
