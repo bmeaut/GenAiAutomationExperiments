@@ -2,7 +2,7 @@ import json
 import ast
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from github import Github, GithubException
 from github.Commit import Commit
 from github.Repository import Repository
@@ -11,6 +11,8 @@ from github.Issue import Issue
 from .logger import log
 from .github_client import GitHubClient
 from .ast_utility import ASTUtils
+
+ProgressCallback = Callable[[int, int, str], None]
 
 
 class DocstringStripper(ast.NodeTransformer):
@@ -280,6 +282,7 @@ class CommitAnalyzer:
             "bug_commit_sha": commit.sha,
             "parent_commit_sha": parent_sha,
             "commit_message": commit_message.split("\n")[0],
+            "commit_date": commit.commit.author.date.isoformat(),
             "changed_files": changed_files,
             **issue_data,
         }
@@ -322,7 +325,9 @@ class CorpusBuilder:
             log(f"ERROR: Invalid JSON - {e}")
             return False
 
-    def _process_repository(self, repo_name: str) -> list[dict[str, Any]]:
+    def _process_repository(
+        self, repo_name: str, progress_callback: ProgressCallback | None = None
+    ) -> list[dict[str, Any]]:
         """Find bugfix commits in a single repo."""
         log(f"Processing repository: {repo_name}")
 
@@ -339,6 +344,9 @@ class CorpusBuilder:
 
             max_depth = self.config["commit_search_depth"]
             max_bugs = self.config["max_commits_per_repo"]
+
+            if progress_callback:
+                progress_callback(0, max_bugs, f"Processing {repo_name}...")
 
             commit_count = 0
             # paginated list did not work with simple for loop
@@ -359,6 +367,13 @@ class CorpusBuilder:
                         f"{bug_data['bug_commit_sha'][:7]} - {bug_data['commit_message']}"
                     )
 
+                    if progress_callback:
+                        progress_callback(
+                            len(bugs),
+                            max_bugs,
+                            f"Found {len(bugs)}/{max_bugs} bugs in {repo_name}",
+                        )
+
                 # stop after finding enough
                 if len(bugs) >= max_bugs:
                     log(f"  Reached limit of {max_bugs} for {repo_name}.")
@@ -377,7 +392,7 @@ class CorpusBuilder:
         with open(corpus_path, "w") as f:
             json.dump(bug_corpus, f, indent=2)
 
-    def build(self) -> None:
+    def build(self, progress_callback: ProgressCallback | None = None) -> None:
         """Build the bugfix corpus from configured repos."""
         if not self._load_configuration():
             return
@@ -393,11 +408,27 @@ class CorpusBuilder:
             return
 
         all_bugs = []
+        total_repos = len(config["repositories"])
+        processed_repos = 0
 
-        for repo_url in config["repositories"]:
+        for repo_idx, repo_url in enumerate(config["repositories"], 1):
             repo_name = repo_url.replace("https://github.com/", "")
-            bugs = self._process_repository(repo_name)
+
+            if progress_callback:
+                progress_callback(
+                    processed_repos,
+                    total_repos,
+                    f"Processing repo {repo_idx}/{total_repos}: {repo_name}",
+                )
+
+            bugs = self._process_repository(repo_name, progress_callback)
             all_bugs.extend(bugs)
+            processed_repos += 1
+
+        if progress_callback:
+            progress_callback(
+                total_repos, total_repos, f"Completed! Found {len(all_bugs)} bugs"
+            )
 
         self._save_corpus(all_bugs)
         log(f"Done! Found {len(all_bugs)} bug fixes total.")

@@ -1068,15 +1068,28 @@ class BugAnalysisGUI(tk.Frame):
 
     def _build_bug_corpus(self):
         """Build bug corpus from configured repositories."""
-        self._set_status("Busy: Building bug corpus...")
         self._save_configuration()
 
         def build_task():
-            builder = CorpusBuilder()
-            builder.build()
+            self._toggle_controls(is_running=True)
+            self._start_spinner("Building bug corpus...")
 
-            self._load_bug_corpus()
-            self._set_status("Idle")
+            try:
+                builder = CorpusBuilder()
+                builder.build(self._create_progress_updater())
+
+                self._load_bug_corpus()
+                final_status = "Bug corpus built successfully!"
+                log(">>> Bug corpus building complete!")
+
+            except Exception as e:
+                final_status = f"ERROR: Corpus building failed: {str(e)[:50]}"
+                log(f"ERROR: Corpus building failed: {e}")
+
+            finally:
+                self._stop_spinner()
+                self._toggle_controls(is_running=False)
+                self._set_status(final_status)
 
         threading.Thread(target=build_task, daemon=True).start()
 
