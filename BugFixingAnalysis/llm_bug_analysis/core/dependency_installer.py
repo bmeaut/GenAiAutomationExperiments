@@ -62,12 +62,19 @@ class DependencyInstaller:
 
     def _install_with_poetry(self):
         """Install dependencies using Poetry."""
-        log("  poetry: installing with 'poetry install'...")
         poetry_cmd = self._get_poetry_path()
-        cmd = [poetry_cmd, "install"]
-        title = f"poetry install: {self.repo_path.name}"
 
-        # poetry handles both deps and package installation
+        # regenerate lock file for consistency
+        # TODO: no reason for lock file if I just regenerate it
+        # TODO: (maybe) remove pip/uv/poetry logic, just use uv pip
+        log("  poetry: regenerating lock file...")
+        lock_cmd = [poetry_cmd, "lock", "--regenerate"]
+        lock_title = f"poetry lock --regenerate: {self.repo_path.name}"
+        self._execute_install(lock_cmd, lock_title, poetry=True)
+
+        log("  poetry: installing dependencies...")
+        cmd = [poetry_cmd, "install"]  # --no-root?
+        title = f"poetry install: {self.repo_path.name}"
         self._execute_install(cmd, title, poetry=True)
 
     def _install_with_uv(self):
