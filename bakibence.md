@@ -140,3 +140,25 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
 - Tesztek írása
 - Teljes pipeline futtatás, adatgyűjtés
 - Hibák alapján iterálás
+
+# 10. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+- Elkezdtem diagrammokat készíteni a szakdolgozathoz PlantUML segítségével
+    - Architektúra, szekvencia, állapotgép, stb.
+- Javítottam az issue és bug commit keresést
+    - Több kulcsszó lefedése
+    - Csak olyan fix commitot tartok meg, ahol a tesztek és forrásfájlok is változtak, így egyértelműen validálható az LLM által generált javítás
+- Több adatot mentek el a pipeline végén
+    - Tesztek esetén: passed/failed/skipped/error számok
+- UI/UX javítás
+    - pause/stop/resume már minden részre jól műküdik
+    - A bugok összeszedése megállítható, legközelebb a következő fel nem dolgozott repótól folytatja a feldolgozást
+    - Hozzáadtam a GUI-hoz egy terminál opciót, ami kiválasztása esetén lehet követni a virtuális környezet építésének és tesztek lefutásának sikerességét
+        - Kevesebbet kell az elmentett log fájlok között turkálnom, ha valami nem működik elsőre
+        - Egy terminál, nem nyit meg minden subprocess újat
+- VirtualEnvironment osztály 3 darabra szedtem: VirtualEnvironment, TestExecutor és DependencyInstaller
+
+## Mivel fogok foglalkozni jövő héten
+- Szakdolgozat írása
+- Teljes pipeline futtatás, hibák alapján iterálás
+- Ha jól látom, már csak a bug kontextus összeszedés és a patchelés javítása maradt hátra, ezeket szerintem be tudom fejezni a következő egy-két hétben (említett feature-stop 2 héttel a leadás előtt)
