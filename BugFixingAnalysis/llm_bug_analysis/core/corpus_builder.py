@@ -42,10 +42,11 @@ class BugFixFilter:
 
     def __init__(self, config: dict):
 
-        self.skip_keywords = config.get("skip_keywords", [])
         self.bug_fix_keywords = config.get("bug_fix_keywords", [])
         self.bug_fix_phrases = config.get("bug_fix_phrases", [])
         self.bug_label_terms = config.get("bug_label_terms", [])
+        self.false_positive_patterns = config.get("false_positive_patterns", [])
+        self.hard_skip_keywords = config.get("hard_skip_keywords", [])
 
     def has_bug_label(self, issue: Issue) -> bool:
         label_names = [label.name.lower() for label in issue.labels]
@@ -54,36 +55,28 @@ class BugFixFilter:
         )
 
     def is_likely_bug_fix(self, title: str, body: str) -> bool:
-        """Looks for keywords like "fix", "bug", "issue" and filters doc/test fixes."""
-
+        """Check if a commit/PR is likely a bug fix by checking for indicators."""
         title_lower = title.lower()
         body_lower = (body or "").lower()
 
-        for keyword in self.skip_keywords:
+        has_bug_keyword = any(
+            keyword in title_lower for keyword in self.bug_fix_keywords
+        )
+        has_bug_phrase = any(
+            phrase in body_lower[:5000] for phrase in self.bug_fix_phrases
+        )
+
+        if not has_bug_keyword and not has_bug_phrase:
+            return False
+
+        if any(pattern in title_lower for pattern in self.false_positive_patterns):
+            return False
+
+        for keyword in self.hard_skip_keywords:
             if keyword in title_lower or keyword in body_lower[:200]:
                 return False
 
-        for keyword in self.bug_fix_keywords:
-            if keyword in title_lower:
-                # filter out doc/test fixes
-                if any(
-                    skip in title_lower
-                    for skip in [
-                        "fix typo",
-                        "fix spelling",
-                        "fix doc",
-                        "fix test marker",
-                    ]
-                ):
-                    return False
-                return True
-
-        # check bug fix phrases in body (maybe should also in title?)
-        for phrase in self.bug_fix_phrases:
-            if phrase in body_lower[:500]:
-                return True
-
-        return False
+        return True
 
 
 class IssueLinker:
@@ -95,7 +88,7 @@ class IssueLinker:
 
     def extract_issue_data(self, commit_message: str) -> dict[str, str] | None:
         """Extract issue data from commit message."""
-        issue_number = self._extract_issue_number(commit_message)
+        issue_number = self._find_primary_issue(commit_message)
         if not issue_number:
             return None
 
@@ -114,10 +107,34 @@ class IssueLinker:
             )
             return None
 
-    def _extract_issue_number(self, text: str) -> int | None:
-        """Find first #123 ref in text."""
-        match = re.search(r"#(\d+)", text)
-        return int(match.group(1)) if match else None
+    def _extract_all_issue_numbers(self, text: str) -> list[int]:
+        """Find all #123 references in text."""
+        matches = re.findall(r"#(\d+)", text)
+        return [int(num) for num in matches]
+
+    def _find_primary_issue(self, text: str) -> int | None:
+        """Find the most likely issue number that this commit fixes."""
+        # "fixes #123", "closes #456", "resolves #789", etc.
+        keyword_pattern = r"(?i)(fix(?:es|ed|ing)?|close(?:s|d|ing)?|resolve(?:s|d|ing)?)\s*:?\s*#(\d+)"
+        keyword_matches = re.findall(keyword_pattern, text)
+
+        if keyword_matches:
+            issue_num = int(keyword_matches[0][1])
+            log(f"    --> Found keyword-linked issue #{issue_num}")
+            return issue_num
+
+        all_issues = self._extract_all_issue_numbers(text)
+
+        if all_issues:
+            # use last
+            issue_num = all_issues[-1]
+            if len(all_issues) > 1:
+                log(
+                    f"    --> Found {len(all_issues)} issues: {all_issues}, using #{issue_num}"
+                )
+            return issue_num
+
+        return None
 
     def _create_issue_data(self, title: str, body: str, source: str) -> dict[str, str]:
         log(f"    --> Got {source}: {title}")
@@ -143,17 +160,14 @@ class IssueLinker:
 
         pr_body = pr.body or ""
 
-        # find linked issue if it exists
         linked_issue = self._find_linked_issue(pr_body)
         if linked_issue:
             return linked_issue
 
-        # check for bug label
         if self.filter.has_bug_label(pr):
             log(f"    --> Has bug label")
             return self._create_issue_data(pr.title, pr_body, "PR description")
 
-        # heuristic check
         if self.filter.is_likely_bug_fix(pr.title, pr_body):
             log(f"    --> Looks like a bug fix based on keywords")
             return self._create_issue_data(pr.title, pr_body, "PR description")
@@ -162,15 +176,16 @@ class IssueLinker:
         return None
 
     def _find_linked_issue(self, pr_body: str) -> dict[str, str] | None:
-        """Look for 'Fixes #123' style issue links."""
-        link_keywords = ["fixes", "closes", "resolves"]
-        pattern = rf"(?i)({'|'.join(link_keywords)})\s+#(\d+)"
+        """Look for 'Fixes #123' style issue links with pattern matching."""
+        # - fix/fixes/fixed/fixing, close/closes/closed/closing, resolve/resolves/resolved/resolving
+        # - "fixes #123", "fixes: #123", "fixes:#123"
+        pattern = r"(?i)(fix(?:es|ed|ing)?|close(?:s|d|ing)?|resolve(?:s|d|ing)?)\s*:?\s*(?:#(\d+)|https?://github\.com/[^/]+/[^/]+/issues/(\d+))"
         match = re.search(pattern, pr_body)
 
         if not match:
             return None
 
-        linked_number = int(match.group(2))
+        linked_number = int(match.group(2) if match.group(2) else match.group(3))
         log(f"    --> Found linked issue #{linked_number}")
 
         try:
@@ -178,10 +193,26 @@ class IssueLinker:
 
             if linked_issue.pull_request:
                 log(
-                    f"    --> WARNING: Linked #{linked_number} is also a PR, "
-                    f"not an issue."
+                    f"    --> Linked #{linked_number} is a PR (possible regression fix)"
                 )
-                return None
+
+                has_bug_label = self.filter.has_bug_label(linked_issue)
+                is_bug_fix = self.filter.is_likely_bug_fix(
+                    linked_issue.title, linked_issue.body or ""
+                )
+
+                if has_bug_label or is_bug_fix:
+                    log(f"    --> Linked PR #{linked_number} appears to be bug-related")
+                    return self._create_issue_data(
+                        linked_issue.title,
+                        linked_issue.body or "",
+                        f"PR #{linked_number} (regression fix)",
+                    )
+                else:
+                    log(
+                        f"    --> Linked PR #{linked_number} is not bug-related, skipping"
+                    )
+                    return None
 
             if self.filter.has_bug_label(linked_issue):
                 log(f"    --> Linked issue has bug label")
@@ -198,9 +229,10 @@ class IssueLinker:
 class CommitAnalyzer:
     """Checks if commits actually change code (not just comments)."""
 
-    def __init__(self, repo: Repository, bug_filter: BugFixFilter):
+    def __init__(self, repo: Repository, bug_filter: BugFixFilter, config: dict):
         self.repo = repo
         self.issue_linker = IssueLinker(repo, bug_filter)
+        self.test_patterns = config.get("test_patterns", [])
 
     def is_functional_change(self, parent_sha, commit_sha, file_path) -> bool:
         try:
@@ -238,6 +270,24 @@ class CommitAnalyzer:
 
         return content_file.decoded_content.decode("utf-8")
 
+    def _categorize_files(self, py_files: list) -> dict:
+        """Separate source files from test files."""
+        test_files = []
+        source_files = []
+
+        for f in py_files:
+            is_test = any(pattern in f.filename for pattern in self.test_patterns)
+            if is_test:
+                test_files.append(f.filename)
+            else:
+                source_files.append(f.filename)
+
+        return {
+            "test_files": test_files,
+            "source_files": source_files,
+            "all_files": [f.filename for f in py_files],
+        }
+
     def process_commit(
         self, commit: Commit, keywords: list[str]
     ) -> dict[str, Any] | None:
@@ -261,9 +311,21 @@ class CommitAnalyzer:
         if not py_files:
             return None
 
-        changed_files = [f.filename for f in py_files]
-        log(f"    --> Changed files: {changed_files}")
+        file_categorization = self._categorize_files(py_files)
 
+        # requirement: must modify both source and test files
+        if not file_categorization["source_files"]:
+            log(f"  Skipping commit {commit.sha[:7]}: Only test files modified.")
+            return None
+
+        if not file_categorization["test_files"]:
+            log(f"  Skipping commit {commit.sha[:7]}: No test files modified.")
+            return None
+
+        log(f"    --> Source files: {file_categorization['source_files']}")
+        log(f"    --> Test files: {file_categorization['test_files']}")
+
+        changed_files = file_categorization["all_files"]
         parent_sha = commit.parents[0].sha
         changed_code = any(
             self.is_functional_change(parent_sha, commit.sha, py_file.filename)
@@ -276,7 +338,7 @@ class CommitAnalyzer:
             )
             return None
 
-        # if all filters passed, that means a valid data point
+        # if all filters passed: valid data point (hopium)
         return {
             "repo_name": self.repo.full_name,
             "bug_commit_sha": commit.sha,
@@ -340,7 +402,7 @@ class CorpusBuilder:
             repo = self.github_client.get_repo(repo_name)
 
             bug_filter = BugFixFilter(self.config)
-            analyzer = CommitAnalyzer(repo, bug_filter)
+            analyzer = CommitAnalyzer(repo, bug_filter, self.config)
 
             max_depth = self.config["commit_search_depth"]
             max_bugs = self.config["max_commits_per_repo"]
