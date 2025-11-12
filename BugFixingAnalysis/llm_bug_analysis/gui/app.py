@@ -9,8 +9,6 @@ from ..core.pipeline import AnalysisPipeline
 from ..core.logger import log
 from ..core.corpus_builder import CorpusBuilder
 
-# TODO: add spinner and percentage to corpus building
-
 
 class ANSIColor:
     """ANSI terminal color codes for console output."""
@@ -374,7 +372,10 @@ class BugAnalysisGUI(tk.Frame):
                 "prereq_file": None,
                 "prereq_message": None,
                 "runner": lambda p: p.run_stage_1_build_contexts(
-                    self.bug_corpus, self.stop_event, self._create_progress_updater()
+                    self.bug_corpus,
+                    self.stop_event,
+                    self.resume_event,
+                    self._create_progress_updater(),
                 ),
             },
             2: {
@@ -780,6 +781,7 @@ class BugAnalysisGUI(tk.Frame):
                     pipeline.run_stage_1_build_contexts(
                         [bug],  # single bug
                         self.stop_event,
+                        self.resume_event,
                         self._create_progress_updater(),
                     )
 
@@ -1069,18 +1071,28 @@ class BugAnalysisGUI(tk.Frame):
     def _build_bug_corpus(self):
         """Build bug corpus from configured repositories."""
         self._save_configuration()
+        self._reset_pipeline_state()
 
         def build_task():
             self._toggle_controls(is_running=True)
+            self.pause_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.NORMAL)
             self._start_spinner("Building bug corpus...")
 
             try:
                 builder = CorpusBuilder()
-                builder.build(self._create_progress_updater())
+                builder.build(
+                    self._create_progress_updater(), self.stop_event, self.resume_event
+                )
 
                 self._load_bug_corpus()
-                final_status = "Bug corpus built successfully!"
-                log(">>> Bug corpus building complete!")
+
+                if self.stop_event.is_set():
+                    final_status = "Corpus building stopped by user"
+                    log(">>> Corpus building stopped by user")
+                else:
+                    final_status = "Bug corpus built successfully!"
+                    log(">>> Bug corpus building complete!")
 
             except Exception as e:
                 final_status = f"ERROR: Corpus building failed: {str(e)[:50]}"

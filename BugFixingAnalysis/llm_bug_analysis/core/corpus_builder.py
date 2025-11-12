@@ -1,6 +1,7 @@
 import json
 import ast
 import re
+import threading
 from pathlib import Path
 from typing import Any, Callable
 from github import Github, GithubException
@@ -11,6 +12,7 @@ from github.Issue import Issue
 from .logger import log
 from .github_client import GitHubClient
 from .ast_utility import ASTUtils
+from .pipeline import PipelineController
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -388,7 +390,11 @@ class CorpusBuilder:
             return False
 
     def _process_repository(
-        self, repo_name: str, progress_callback: ProgressCallback | None = None
+        self,
+        repo_name: str,
+        progress_callback: ProgressCallback | None = None,
+        stop_event: threading.Event | None = None,
+        resume_event: threading.Event | None = None,
     ) -> list[dict[str, Any]]:
         """Find bugfix commits in a single repo."""
         log(f"Processing repository: {repo_name}")
@@ -413,6 +419,15 @@ class CorpusBuilder:
             commit_count = 0
             # paginated list did not work with simple for loop
             for commit in repo.get_commits():
+                status, _ = PipelineController.check_pause_and_stop(
+                    resume_event,
+                    stop_event,
+                    pause_msg="  Commit processing paused - waiting...",
+                    resume_msg="  Commit processing resumed",
+                )
+                if status == "stopped":
+                    break
+
                 commit_count += 1
                 if commit_count > max_depth:
                     log(f"  Searched {max_depth} commits, stopping.")
@@ -454,7 +469,32 @@ class CorpusBuilder:
         with open(corpus_path, "w") as f:
             json.dump(bug_corpus, f, indent=2)
 
-    def build(self, progress_callback: ProgressCallback | None = None) -> None:
+    def _load_existing_corpus(self) -> list[dict[str, Any]]:
+        """Load corpus.json if it exists."""
+        project_root = Path(__file__).parent.parent
+        corpus_path = project_root / "corpus.json"
+
+        if not corpus_path.exists():
+            log("No existing corpus found, starting fresh")
+            return []
+
+        try:
+            existing = json.loads(corpus_path.read_text())
+            if not isinstance(existing, list):
+                log("WARNING: Invalid corpus format, starting fresh")
+                return []
+            log(f"Loaded existing corpus: {len(existing)} bugs")
+            return existing
+        except Exception as e:
+            log(f"WARNING: Could not load corpus.json: {e}")
+            return []
+
+    def build(
+        self,
+        progress_callback: ProgressCallback | None = None,
+        stop_event: threading.Event | None = None,
+        resume_event: threading.Event | None = None,
+    ) -> None:
         """Build the bugfix corpus from configured repos."""
         if not self._load_configuration():
             return
@@ -469,12 +509,35 @@ class CorpusBuilder:
             log(f"ERROR: {e}")
             return
 
-        all_bugs = []
+        # so corpus building can be resumed
+        all_bugs = self._load_existing_corpus()
+        processed_repo_names = set(bug["repo_name"] for bug in all_bugs)
+
+        if processed_repo_names:
+            log(
+                f"Found {len(all_bugs)} existing bugs from {len(processed_repo_names)} repos"
+            )
+
         total_repos = len(config["repositories"])
-        processed_repos = 0
+        processed_repos = len(processed_repo_names)
 
         for repo_idx, repo_url in enumerate(config["repositories"], 1):
+            status, _ = PipelineController.check_pause_and_stop(
+                resume_event,
+                stop_event,
+                pause_msg="Corpus building paused - waiting...",
+                resume_msg="Corpus building resumed",
+                stop_msg=f"\nWARNING: Corpus building stopped by user\n"
+                f"Progress saved: {len(all_bugs)} bugs from {processed_repos} repos",
+            )
+            if status == "stopped":
+                break
+
             repo_name = repo_url.replace("https://github.com/", "")
+
+            if repo_name in processed_repo_names:
+                log(f"Skipping {repo_name} (already in corpus)")
+                continue
 
             if progress_callback:
                 progress_callback(
@@ -483,8 +546,16 @@ class CorpusBuilder:
                     f"Processing repo {repo_idx}/{total_repos}: {repo_name}",
                 )
 
-            bugs = self._process_repository(repo_name, progress_callback)
+            bugs = self._process_repository(
+                repo_name, progress_callback, stop_event, resume_event
+            )
             all_bugs.extend(bugs)
+
+            # incremental after each repo
+            self._save_corpus(all_bugs)
+            if bugs:
+                log(f"  Saved {len(bugs)} bugs to corpus.json ({len(all_bugs)} total)")
+
             processed_repos += 1
 
         if progress_callback:
@@ -492,5 +563,4 @@ class CorpusBuilder:
                 total_repos, total_repos, f"Completed! Found {len(all_bugs)} bugs"
             )
 
-        self._save_corpus(all_bugs)
         log(f"Done! Found {len(all_bugs)} bug fixes total.")

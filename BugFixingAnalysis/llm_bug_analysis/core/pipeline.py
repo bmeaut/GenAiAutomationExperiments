@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Tuple, Literal
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
@@ -12,12 +12,50 @@ from .logger import log
 from .results_logger import ResultsLogger
 from .debug_helper import DebugHelper
 from .patch_evaluator import PatchEvaluator
-from .git_operations import GitOperations
 from .context_builder import ContextBuilder
 from .terminal_manager import TerminalManager
+from .cache_manager import CacheManager
 
-# TODO: add % preview to status bar
 ProgressCallback = Callable[[int, int, str], None]
+ControlStatus = Literal["continue", "paused", "stopped"]
+
+
+class PipelineController:
+    """Pause/resume/stop logic for pipeline operations."""
+
+    @staticmethod
+    def check_pause_and_stop(
+        resume_event: threading.Event | None,
+        stop_event: threading.Event | None,
+        pause_msg: str = "Paused - waiting...",
+        resume_msg: str = "Resumed",
+        stop_msg: str | None = None,
+    ) -> Tuple[ControlStatus, str | None]:
+
+        # paused
+        if resume_event and not resume_event.is_set():
+            log(pause_msg)
+            while not resume_event.is_set():
+                resume_event.wait(timeout=0.5)
+                if stop_event and stop_event.is_set():
+                    break
+
+            # stopped while paused
+            if stop_event and stop_event.is_set():
+                if stop_msg:
+                    log(stop_msg)
+                return ("stopped", stop_msg)
+
+            log(resume_msg)
+            return ("paused", None)
+
+        # stopped
+        if stop_event and stop_event.is_set():
+            if stop_msg:
+                log(stop_msg)
+            return ("stopped", stop_msg)
+
+        return ("continue", None)
 
 
 class AnalysisPipeline:
@@ -68,6 +106,8 @@ class AnalysisPipeline:
             context_cache_dir=self.context_cache_dir,
             llm_response_cache_dir=self.llm_response_cache_dir,
         )
+
+        self.cache_manager = CacheManager(self.project_root)
 
     @contextmanager
     def _terminal_context(self, title: str):
@@ -120,6 +160,7 @@ class AnalysisPipeline:
         self,
         corpus: list[dict[str, Any]],
         stop_event: threading.Event | None = None,
+        resume_event: threading.Event | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Build contexts for all bugs."""
@@ -138,8 +179,14 @@ class AnalysisPipeline:
             all_contexts = {}
 
             for repo_idx, (repo_name, bugs) in enumerate(bugs_by_repo.items(), 1):
-                if stop_event.is_set():
-                    log("\nWARNING: Stage 1 stopped.")
+                status, _ = PipelineController.check_pause_and_stop(
+                    resume_event,
+                    stop_event,
+                    pause_msg="Stage 1 paused - waiting...",
+                    resume_msg="Stage 1 resumed",
+                    stop_msg="\nWARNING: Stage 1 stopped.",
+                )
+                if status == "stopped":
                     break
 
                 log(
@@ -151,6 +198,7 @@ class AnalysisPipeline:
                         repo_name,
                         bugs,
                         stop_event,
+                        resume_event,
                         lambda curr, total, msg: (
                             progress_callback(processed_bugs + curr, total_bugs, msg)
                             if progress_callback
@@ -169,18 +217,11 @@ class AnalysisPipeline:
                 f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
             )
 
-            cache_file = (
-                self.project_root
-                / ".cache"
-                / "pipeline_stages"
-                / "stage1_contexts.json"
+            self.cache_manager.save_json_cache(
+                "stage1_contexts.json",
+                all_contexts,
+                f"Contexts saved to {self.cache_manager.cache_dir / 'stage1_contexts.json'}",
             )
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                cache_file.write_text(json.dumps(all_contexts, indent=2, default=str))
-                log(f"Contexts saved to {cache_file}")
-            except Exception as e:
-                log(f"ERROR: Failed to save contexts: {e}")
 
             return all_contexts
 
@@ -189,6 +230,7 @@ class AnalysisPipeline:
         repo_name: str,
         bugs: list[dict[str, Any]],
         stop_event: threading.Event,
+        resume_event: threading.Event | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Build contexts for all bugs in one repo."""
@@ -251,7 +293,13 @@ class AnalysisPipeline:
 
                 total = len(uncached_bugs)
                 for i, bug in enumerate(uncached_bugs, 1):
-                    if stop_event.is_set():
+                    status, _ = PipelineController.check_pause_and_stop(
+                        resume_event,
+                        stop_event,
+                        pause_msg="  Bug processing paused - waiting...",
+                        resume_msg="  Bug processing resumed",
+                    )
+                    if status == "stopped":
                         break
 
                     bug_sha = bug.get("bug_commit_sha", "unknown")
@@ -316,25 +364,14 @@ class AnalysisPipeline:
             stop_event = threading.Event()
 
         if contexts is None:
-            cache_file = (
-                self.project_root
-                / ".cache"
-                / "pipeline_stages"
-                / "stage1_contexts.json"
+            contexts = self.cache_manager.load_json_cache(
+                "stage1_contexts.json",
+                dict,
+                "No contexts found!\n   Run stage 1 to build contexts.",
+                "Invalid contexts format",
+                return_on_error={},
             )
-            if not cache_file.exists():
-                log("ERROR: No contexts found!")
-                log("Run stage 1 to build contexts.")
-                return {}
-
-            try:
-                contexts = json.loads(cache_file.read_text())
-                if not isinstance(contexts, dict):
-                    log("ERROR: Invalid contexts format")
-                    return {}
-                log(f"Loaded {len(contexts)} contexts from cache")
-            except Exception as e:
-                log(f"ERROR: Failed to load contexts: {e}")
+            if not contexts:
                 return {}
 
         else:
@@ -358,15 +395,11 @@ class AnalysisPipeline:
             f"\nSUCCESS: Stage 2 complete: {len(patches)}/{len(contexts)} patches generated"
         )
 
-        cache_file = (
-            self.project_root / ".cache" / "pipeline_stages" / "stage2_patches.json"
+        self.cache_manager.save_json_cache(
+            "stage2_patches.json",
+            patches,
+            f"Patches saved to {self.cache_manager.cache_dir / 'stage2_patches.json'}",
         )
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            cache_file.write_text(json.dumps(patches, indent=2, default=str))
-            log(f"Patches saved to {cache_file}")
-        except Exception as e:
-            log(f"ERROR: Failed to save patches: {e}")
 
         return patches
 
@@ -511,57 +544,35 @@ class AnalysisPipeline:
 
                 if self.skip_llm_fix:
                     log("Skip mode: Loading contexts from Stage 1...")
-                    cache_file = (
-                        self.project_root
-                        / ".cache"
-                        / "pipeline_stages"
-                        / "stage1_contexts.json"
+                    contexts = self.cache_manager.load_json_cache(
+                        "stage1_contexts.json",
+                        dict,
+                        "No contexts found!\n   Run Stage 1 to build contexts first.",
+                        "Invalid contexts format",
+                        return_on_error=None,
                     )
-                    if not cache_file.exists():
-                        log("ERROR: No contexts found!")
-                        log("   Run Stage 1 to build contexts first.")
+                    if contexts is None:
                         return
 
-                    try:
-                        contexts = json.loads(cache_file.read_text())
-                        if not isinstance(contexts, dict):
-                            log("ERROR: Invalid contexts format")
-                            return
-
-                        patches = {
-                            bug_key: {
-                                "bug": ctx_data["bug"],
-                                "llm_result": None,  # no llm stuff in skip mode
-                                "changed_files": ctx_data.get("changed_files", []),
-                            }
-                            for bug_key, ctx_data in contexts.items()
+                    patches = {
+                        bug_key: {
+                            "bug": ctx_data["bug"],
+                            "llm_result": None,  # no llm stuff in skip mode
+                            "changed_files": ctx_data.get("changed_files", []),
                         }
-                        log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
-
-                    except Exception as e:
-                        log(f"ERROR: Failed to load contexts: {e}")
-                        return
+                        for bug_key, ctx_data in contexts.items()
+                    }
+                    log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
 
                 else:
-                    cache_file = (
-                        self.project_root
-                        / ".cache"
-                        / "pipeline_stages"
-                        / "stage2_patches.json"
+                    patches = self.cache_manager.load_json_cache(
+                        "stage2_patches.json",
+                        dict,
+                        "No patches found!\n   Run Stage 2 to generate patches.",
+                        "Invalid patches format",
+                        return_on_error=None,
                     )
-                    if not cache_file.exists():
-                        log("ERROR: No patches found!")
-                        log("   Run Stage 2 to generate patches.")
-                        return
-
-                    try:
-                        patches = json.loads(cache_file.read_text())
-                        if not isinstance(patches, dict):
-                            log("ERROR: Invalid patches format")
-                            return
-                        log(f"Loaded {len(patches)} patches from cache")
-                    except Exception as e:
-                        log(f"ERROR: Failed to load patches: {e}")
+                    if patches is None:
                         return
 
             else:
@@ -578,8 +589,14 @@ class AnalysisPipeline:
             for repo_idx, (repo_name, repo_patches) in enumerate(
                 patches_by_repo.items(), 1
             ):
-                if stop_event.is_set():
-                    log("\nWARNING: Stage 3 stopped.")
+                status, _ = PipelineController.check_pause_and_stop(
+                    resume_event,
+                    stop_event,
+                    pause_msg="Stage 3 paused - waiting...",
+                    resume_msg="Stage 3 resumed",
+                    stop_msg="\nWARNING: Stage 3 stopped.",
+                )
+                if status == "stopped":
                     break
 
                 log(
@@ -646,13 +663,14 @@ class AnalysisPipeline:
             total = len(repo_patches)
             prev_commit_sha = None
             for i, patch_data in enumerate(repo_patches, 1):
-                if stop_event.is_set():
+                status, _ = PipelineController.check_pause_and_stop(
+                    resume_event,
+                    stop_event,
+                    pause_msg="Paused - waiting...",
+                    resume_msg="Resumed",
+                )
+                if status == "stopped":
                     break
-
-                if not resume_event.is_set():
-                    log("Paused - waiting...")
-                    resume_event.wait()
-                    log("Resumed")
 
                 bug = patch_data.get("bug")
                 if not bug:
@@ -772,7 +790,7 @@ class AnalysisPipeline:
         with self._terminal_context("LLM Bug Analysis Pipeline"):
             log("\nStage 1/3: Building contexts...")
             contexts = self.run_stage_1_build_contexts(
-                corpus, stop_event, progress_callback
+                corpus, stop_event, resume_event, progress_callback
             )
             if stop_event and stop_event.is_set():
                 log("Pipeline stopped after Stage 1")
