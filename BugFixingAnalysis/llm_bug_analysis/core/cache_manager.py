@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any
 from .logger import log
 
+# TODO: move other cache-related functions here
+
 
 class CacheManager:
     """Manages loading and saving of JSON cache files for pipeline stages."""

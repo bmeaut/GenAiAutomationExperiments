@@ -256,14 +256,22 @@ class AnalysisPipeline:
                         continue
 
                     formatted_context = self._extract_formatted_context(cached)
-                    changed_files = bug.get("changed_files", [])
-                    if not changed_files:
-                        log(f"    No Python files changed (check corpus.json).")
+                    changed_source_files = bug.get("changed_source_files", [])
+                    changed_test_files = bug.get("changed_test_files", [])
+                    if not changed_source_files:
+                        log(f"    No Python source files changed (check corpus.json).")
                         continue
+
+                    # context metadata for csv logging
+                    from .context_builder import ContextFormatter
+
+                    context_metadata = ContextFormatter.extract_metadata(cached)
                     contexts[bug_key] = {
                         "bug": bug,
                         "formatted_context": formatted_context,
-                        "changed_files": changed_files,
+                        "changed_source_files": changed_source_files,
+                        "changed_test_files": changed_test_files,
+                        "context_metadata": context_metadata,
                     }
                     log(f"    [{bug_sha[:7]}] loaded from cache.")
 
@@ -310,11 +318,14 @@ class AnalysisPipeline:
                         progress_callback(i, total, f"Building context: {bug_key}")
 
                     log(f"  [{i}/{total}] {bug_sha[:7]}")
-
+                    # TODO: repeated code, remove
                     try:
-                        changed_files = bug.get("changed_files", [])
-                        if not changed_files:
-                            log(f"    No Python files changed (check corpus.json).")
+                        changed_source_files = bug.get("changed_source_files", [])
+                        changed_test_files = bug.get("changed_test_files", [])
+                        if not changed_source_files:
+                            log(
+                                f"    No Python source files changed (check corpus.json)."
+                            )
                             continue
 
                         handler.checkout(parent_sha)
@@ -327,11 +338,15 @@ class AnalysisPipeline:
                         )
 
                         context, context_text = builder.build_and_format(bug)
+                        from .context_builder import ContextFormatter
 
+                        context_metadata = ContextFormatter.extract_metadata(context)
                         contexts[bug_key] = {
                             "bug": bug,
                             "formatted_context": context_text,
-                            "changed_files": changed_files,
+                            "changed_source_files": changed_source_files,
+                            "changed_test_files": changed_test_files,
+                            "context_metadata": context_metadata,
                         }
 
                         log(f"    Context built ({len(context_text)} chars)")
@@ -494,14 +509,18 @@ class AnalysisPipeline:
     ) -> dict[str, Any]:
         """Generate a single patch from pre-built context."""
         bug = context_data["bug"]
-        changed_files = context_data.get("changed_files", [])
+        changed_source_files = context_data.get("changed_source_files", [])
+        changed_test_files = context_data.get("changed_test_files", [])
+        context_metadata = context_data.get("context_metadata", {})
 
         if self.skip_llm_fix:
             log(f"  Skipping LLM generation for {bug_key} (skip_llm_fix=True)")
             return {
                 "bug": bug,
                 "llm_result": None,
-                "changed_files": changed_files,
+                "changed_source_files": changed_source_files,
+                "changed_test_files": changed_test_files,
+                "context_metadata": context_metadata,
                 "skipped": True,
             }
 
@@ -517,7 +536,9 @@ class AnalysisPipeline:
         return {
             "bug": bug,
             "llm_result": llm_result,
-            "changed_files": changed_files,
+            "changed_source_files": changed_source_files,
+            "changed_test_files": changed_test_files,
+            "context_metadata": context_metadata,
         }
 
     def run_stage_3_test_patches(
@@ -558,7 +579,13 @@ class AnalysisPipeline:
                         bug_key: {
                             "bug": ctx_data["bug"],
                             "llm_result": None,  # no llm stuff in skip mode
-                            "changed_files": ctx_data.get("changed_files", []),
+                            "changed_source_files": ctx_data.get(
+                                "changed_source_files", []
+                            ),
+                            "changed_test_files": ctx_data.get(
+                                "changed_test_files", []
+                            ),
+                            "context_metadata": ctx_data.get("context_metadata", {}),
                         }
                         for bug_key, ctx_data in contexts.items()
                     }
@@ -727,15 +754,19 @@ class AnalysisPipeline:
 
         bug = patch_data["bug"]
         llm_result = patch_data.get("llm_result")
-        changed_files = patch_data.get("changed_files", [])
+        changed_source_files = patch_data.get("changed_source_files", [])
+        changed_test_files = patch_data.get("changed_test_files", [])
+        context_metadata = patch_data.get("context_metadata", {})
 
         fix_sha = bug["bug_commit_sha"]
         parent_sha = bug["parent_commit_sha"]
 
         try:
-            results = {**bug}
+            results = {**bug, **context_metadata}
 
-            before = self._analyze_before(handler, parent_sha, changed_files)
+            before = self._analyze_before(
+                handler, parent_sha, changed_source_files, changed_test_files
+            )
             results["comp_before"] = before
 
             if self.skip_llm_fix:
@@ -746,7 +777,8 @@ class AnalysisPipeline:
                     bug=bug,
                     handler=handler,
                     parent_sha=parent_sha,
-                    changed_files=changed_files,
+                    changed_source_files=changed_source_files,
+                    changed_test_files=changed_test_files,
                     debug_mode=self.debug_on_failure,
                     llm_fix=llm_result,
                 )
@@ -758,20 +790,21 @@ class AnalysisPipeline:
             human = self.patch_evaluator.evaluate_human_fix(
                 handler,
                 fix_sha,
-                changed_files,
+                changed_source_files,
+                changed_test_files,
                 bug,
             )
             results["human_results"] = human
-            total_time = time.time() - start_time
-            results["total_time_seconds"] = total_time  # TODO: quick fix: +env+llm_time
+            total_test_time = time.time() - start_time
             results["env_setup_time_seconds"] = handler.venv.get_setup_time()
+            results["total_test_time_seconds"] = total_test_time
 
             self._log_final_comparison(results)
             self.results_logger.log(results)
 
         except Exception as e:
-            total_time = time.time() - start_time
-            log(f"ERROR after {total_time:.1f}s: {e}")
+            total_test_time = time.time() - start_time
+            log(f"ERROR after {total_test_time:.1f}s: {e}")
 
     def run_full_pipeline(
         self,
@@ -821,13 +854,14 @@ class AnalysisPipeline:
         self,
         handler: ProjectHandler,
         parent_sha: str,
-        changed_files: list,
+        changed_source_files: list,
+        changed_test_files: list,
     ) -> dict[str, Any]:
         """Measure complexity before the fix."""
         log("  Analyzing 'before' state...")
 
         repo_path = Path(handler.repo_path)
-        existing = [f for f in changed_files if (repo_path / f).exists()]
+        existing = [f for f in changed_source_files if (repo_path / f).exists()]
 
         complexity = analyze_files(str(handler.repo_path), existing)
 

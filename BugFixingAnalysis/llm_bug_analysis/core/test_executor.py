@@ -52,18 +52,6 @@ class TestExecutor:
     ) -> list[str]:
         """Build test command with all configurations applied."""
 
-        if self._is_django_core():
-            python_path = str(self.venv_path / "bin" / "python")
-            log("    --> Django core detected, using runtests.py")
-            return [
-                python_path,
-                "runtests.py",
-                "--settings",
-                "test_sqlite",
-                "--parallel",
-                "1",
-            ]
-
         cmd = test_command.split()
 
         # transformations in order
@@ -191,9 +179,6 @@ class TestExecutor:
             ),
         }
 
-        if self._is_django_core():
-            env["DJANGO_SETTINGS_MODULE"] = "test_sqlite"
-
         return env
 
     def _run_test_command(
@@ -230,7 +215,7 @@ class TestExecutor:
 
         title = f"Test_{run_type}_{commit_sha[:7]}"
 
-        cwd = self.repo_path / "tests" if self._is_django_core() else self.repo_path
+        cwd = self.repo_path
 
         process = self.terminal_manager.queue_command(
             cmd,
@@ -277,7 +262,7 @@ class TestExecutor:
             full_env.update(env)
             full_env.pop("PYTHONHOME", None)
 
-            cwd = self.repo_path / "tests" if self._is_django_core() else self.repo_path
+            cwd = self.repo_path
 
             result = subprocess.run(
                 cmd,
@@ -441,10 +426,3 @@ class TestExecutor:
             return True
 
         return False
-
-    def _is_django_core(self) -> bool:
-        indicators = [
-            (self.repo_path / "django" / "__init__.py").exists(),
-            (self.repo_path / "tests" / "runtests.py").exists(),
-        ]
-        return any(indicators)

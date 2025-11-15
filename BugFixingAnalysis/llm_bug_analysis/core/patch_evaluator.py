@@ -35,7 +35,8 @@ class PatchEvaluator:
         bug: dict[str, Any],
         handler: ProjectHandler,
         parent_sha: str,
-        changed_files: list,
+        changed_source_files: list,
+        changed_test_files: list,
         debug_mode: bool,
         llm_fix: dict[str, Any],
     ) -> dict[str, Any]:
@@ -83,7 +84,14 @@ class PatchEvaluator:
 
         # apply and test the patch
         result = self._test_ai_patch(
-            patch, stats, handler, parent_sha, changed_files, bug, debug_mode
+            patch,
+            stats,
+            handler,
+            parent_sha,
+            changed_source_files,
+            changed_test_files,
+            bug,
+            debug_mode,
         )
 
         result["llm_metadata"] = metadata
@@ -93,7 +101,8 @@ class PatchEvaluator:
         self,
         handler: ProjectHandler,
         fix_sha: str,
-        changed_files: list,
+        changed_source_files: list,
+        changed_test_files: list,
         bug: dict[str, Any],
     ) -> dict[str, Any]:
         """Test human written fix."""
@@ -104,15 +113,15 @@ class PatchEvaluator:
         handler.checkout(fix_sha)
 
         repo_path = Path(handler.repo_path)
-        existing_files = [f for f in changed_files if (repo_path / f).exists()]
+        existing_files = [f for f in changed_source_files if (repo_path / f).exists()]
 
         complexity = analyze_files(str(handler.repo_path), existing_files)
 
-        # get patch stats
-        patch_text = handler.get_human_patch(fix_sha)
+        # get patch stats (only for source files, for fair comparison)
+        patch_text = handler.get_human_patch(fix_sha, changed_source_files)
         stats = PatchGenerator.count_patch_stats(patch_text)
         log(
-            f"    --> Human Patch Stats: +{stats['lines_added']}/-{stats['lines_deleted']} lines"
+            f"    --> Human Patch Stats (source files only): +{stats['lines_added']}/-{stats['lines_deleted']} lines"
         )
 
         # run tests
@@ -141,7 +150,8 @@ class PatchEvaluator:
         patch_stats: dict[str, int],
         handler: ProjectHandler,
         parent_sha: str,
-        changed_files: list,
+        changed_source_files: list,
+        changed_test_files: list,
         bug: dict[str, Any],
         debug_mode: bool,
     ) -> dict[str, Any]:
@@ -177,12 +187,12 @@ class PatchEvaluator:
             }
 
         # applied successfully - analyze and test
-        existing_files = [f for f in changed_files if (repo_path / f).exists()]
+        existing_files = [f for f in changed_source_files if (repo_path / f).exists()]
         complexity = analyze_files(str(handler.repo_path), existing_files)
 
         human_sha = bug.get("bug_commit_sha", "")
         if human_sha:
-            test_files = self._get_changed_test_files(handler, human_sha)
+            test_files = bug.get("changed_test_files", [])
             if test_files:
                 self._copy_human_tests_to_ai_workspace(handler, human_sha, test_files)
 
@@ -245,35 +255,6 @@ class PatchEvaluator:
             "avg_params": "N/A",
             "total_tokens": "N/A",
         }
-
-    def _is_test_file(self, filepath: Path | str) -> bool:
-        """Check if a file is part of the test suite."""
-        path = Path(filepath)
-
-        if path.name.startswith("test_") or path.name.endswith("_test.py"):
-            return True
-        if "test" in path.parts:
-            return True
-        if path.parent.name in ("tests", "test"):
-            return True
-
-        return False
-
-    def _get_changed_test_files(
-        self,
-        handler: ProjectHandler,
-        human_sha: str,
-    ) -> list[str]:
-        """Get list test file that were changed in human fix."""
-        all_changed = handler.get_changed_files(human_sha)
-
-        test_files = [f for f in all_changed if self._is_test_file(f)]
-        if test_files:
-            log(f"    --> Found {len(test_files)} changed test file(s):")
-            for tf in test_files:
-                log(f"        - {tf}")
-
-        return test_files
 
     def _copy_human_tests_to_ai_workspace(
         self, handler: ProjectHandler, human_sha: str, test_files: list[str]

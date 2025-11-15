@@ -666,12 +666,12 @@ class BugAnalysisGUI(tk.Frame):
         log(f"Bug: {repo_name}:{bug_sha}")
         log(f"{'='*60}\n")
 
-        # show bug details
         log(f"Bug details:")
         log(f"  Repo: {repo_name}")
         log(f"  SHA: {bug.get('bug_commit_sha')}")
         log(f"  Parent: {bug.get('parent_commit_sha')}")
-        log(f"  Changed files: {bug.get('changed_files', [])}")
+        log(f"  Source files: {bug.get('changed_source_files', [])}")
+        log(f"  Test files: {bug.get('changed_test_files', [])}")
         log(f"  Issue title: {bug.get('issue_title', 'N/A')[:100]}")
         log(f"  Issue body length: {len(bug.get('issue_body', ''))} chars")
 
@@ -690,7 +690,9 @@ class BugAnalysisGUI(tk.Frame):
         log(f"Repo exists: {handler.repo_path.exists()}")
 
         log(f"\nChecking changed files:")
-        for file_path in bug.get("changed_files", []):
+        source_files = bug.get("changed_source_files", [])
+        test_files = bug.get("changed_test_files", [])
+        for file_path in source_files + test_files:
             full_path = handler.repo_path / file_path
             log(f"  {file_path}:")
             log(f"    Full path: {full_path}")

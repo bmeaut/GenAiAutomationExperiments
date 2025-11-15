@@ -314,7 +314,7 @@ class LLMManager:
             "metadata": {**metadata, "generation_time_seconds": generation_time},
         }
         # TODO: add back context later to save into results,
-        # or should it be save where it is created, so I don't
+        # or should it be saved where it is created, so I don't
         # pass it along everywhere?
 
         self._save_to_cache(bug, provider, model, final_result)

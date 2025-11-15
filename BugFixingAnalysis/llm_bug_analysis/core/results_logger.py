@@ -11,7 +11,14 @@ class ResultsLogger:
         "timestamp",
         "repo_name",
         "bug_commit_sha",
-        "file_path",
+        "source_file_path",
+        "test_file_path",
+        "context_classes_count",
+        "context_functions_count",
+        "context_snippets_count",
+        "context_structural_classes_count",
+        "context_recent_changes_count",
+        "context_related_commits_count",
         "commit_message",
         "issue_title",
         "issue_body",
@@ -87,14 +94,22 @@ class ResultsLogger:
             human_comp = human_results.get("complexity", {})
             human_test_stats = human_results.get("test_stats", {})
 
-            file_paths_str = "; ".join(bug_data.get("changed_files", []))
+            source_path_str = "; ".join(bug_data.get("changed_source_files", []))
+            test_path_str = "; ".join(bug_data.get("changed_test_files", []))
 
             writer.writerow(
                 [
                     datetime.datetime.now().isoformat(),
                     bug_data.get("repo_name"),
                     bug_data.get("bug_commit_sha"),
-                    file_paths_str,
+                    source_path_str,
+                    test_path_str,
+                    bug_data.get("context_classes_count", 0),
+                    bug_data.get("context_functions_count", 0),
+                    bug_data.get("context_snippets_count", 0),
+                    bug_data.get("context_structural_classes_count", 0),
+                    bug_data.get("context_recent_changes_count", 0),
+                    bug_data.get("context_related_commits_count", 0),
                     bug_data.get("commit_message"),
                     bug_data.get("issue_title"),
                     bug_data.get("issue_body"),
@@ -137,6 +152,9 @@ class ResultsLogger:
                     llm_metadata.get("generation_time_seconds", "N/A"),
                     ai_results.get("test_time_seconds", "N/A"),
                     human_results.get("test_time_seconds", "N/A"),
-                    bug_data.get("total_time_seconds", "N/A"),
+                    ai_results.get("test_time_seconds", 0)
+                    + human_results.get("test_time_seconds", 0)
+                    + llm_metadata.get("generation_time_seconds", 0)
+                    + bug_data.get("env_setup_time_seconds", 0),
                 ]
             )

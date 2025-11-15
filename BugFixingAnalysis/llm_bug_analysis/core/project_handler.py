@@ -59,10 +59,6 @@ class ProjectHandler:
     def reset_to_commit(self, commit_sha: str):
         self.git_ops.reset_to_commit(commit_sha)
 
-    def get_changed_files(self, commit_sha: str) -> list[str]:
-        """Get .py files changed in commit."""
-        return self.git_ops.get_changed_files(commit_sha)
-
     def get_file_at_commit(self, commit_sha: str, filepath: str) -> str | None:
         """Get file from specific commit."""
         try:
@@ -87,9 +83,11 @@ class ProjectHandler:
         """Read file content at specific commit."""
         return self.git_ops.get_full_file_content(commit_sha, file_path)
 
-    def get_human_patch(self, commit_sha: str) -> str:
+    def get_human_patch(
+        self, commit_sha: str, file_paths: list[str] | None = None
+    ) -> str:
         """Generate unified diff for commit."""
-        return self.git_ops.get_human_patch(commit_sha)
+        return self.git_ops.get_human_patch(commit_sha, file_paths)
 
     def validate_and_debug_patch_detailed(self, patch_file_path: str) -> dict[str, Any]:
         """Validate patch with failure analysis."""

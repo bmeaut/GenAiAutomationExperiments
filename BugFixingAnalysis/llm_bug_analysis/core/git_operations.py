@@ -62,33 +62,6 @@ class GitOperations:
             raise RuntimeError("ERROR: Repository not initialized.")
         self.repo.git.reset("--hard", commit_sha)
 
-    def get_changed_files(self, commit_sha: str) -> list[str]:
-        """Get .py files changed in a commit."""
-        if not self.repo:
-            raise RuntimeError("ERROR: Repository not initialized.")
-
-        try:
-            commit = self.repo.commit(commit_sha)
-            if not commit.parents:
-                log("  --> Commit has no parent, skipping.")
-                return []
-
-            parent = commit.parents[0]
-            diffs = parent.diff(commit)
-
-            py_files = []
-            for d in diffs:
-                # path from a_path or b_path handles renames/deletions
-                path = d.b_path or d.a_path
-                if path and path.endswith(".py"):
-                    py_files.append(path)
-
-            return py_files
-
-        except Exception as e:
-            log(f"  --> ERROR getting changed files: {e}")
-            return []
-
     def get_full_file_content(self, commit_sha: str, file_path: str) -> str:
         """Read full file content at a specific commit."""
         if not self.repo:
@@ -102,7 +75,9 @@ class GitOperations:
             log(f"  --> ERROR reading file {file_path} at {commit_sha[:7]}: {e}")
             return ""
 
-    def get_human_patch(self, commit_sha: str) -> str:
+    def get_human_patch(
+        self, commit_sha: str, file_paths: list[str] | None = None
+    ) -> str:
         """Generate a unified diff patch for a commit."""
         if not self.repo:
             raise RuntimeError("ERROR: Repository not initialized.")
@@ -115,11 +90,22 @@ class GitOperations:
                 return ""
 
             parent = commit.parents[0]
-            patch = self.repo.git.diff(
-                parent.hexsha,
-                commit.hexsha,
-                unified=3,
-            )
+
+            if file_paths:
+                # generate patch only for specified files
+                patch = self.repo.git.diff(
+                    parent.hexsha,
+                    commit.hexsha,
+                    "--unified=3",
+                    "--",
+                    *file_paths,
+                )
+            else:
+                patch = self.repo.git.diff(
+                    parent.hexsha,
+                    commit.hexsha,
+                    "--unified=3",
+                )
             return patch
 
         except Exception as e:

@@ -44,11 +44,15 @@ class BugFixFilter:
 
     def __init__(self, config: dict):
 
-        self.bug_fix_keywords = config.get("bug_fix_keywords", [])
-        self.bug_fix_phrases = config.get("bug_fix_phrases", [])
-        self.bug_label_terms = config.get("bug_label_terms", [])
-        self.false_positive_patterns = config.get("false_positive_patterns", [])
-        self.hard_skip_keywords = config.get("hard_skip_keywords", [])
+        self.bug_fix_keywords = [k.lower() for k in config.get("bug_fix_keywords", [])]
+        self.bug_fix_phrases = [p.lower() for p in config.get("bug_fix_phrases", [])]
+        self.bug_label_terms = [t.lower() for t in config.get("bug_label_terms", [])]
+        self.false_positive_patterns = [
+            p.lower() for p in config.get("false_positive_patterns", [])
+        ]
+        self.hard_skip_keywords = [
+            k.lower() for k in config.get("hard_skip_keywords", [])
+        ]
 
     def has_bug_label(self, issue: Issue) -> bool:
         label_names = [label.name.lower() for label in issue.labels]
@@ -234,7 +238,7 @@ class CommitAnalyzer:
     def __init__(self, repo: Repository, bug_filter: BugFixFilter, config: dict):
         self.repo = repo
         self.issue_linker = IssueLinker(repo, bug_filter)
-        self.test_patterns = config.get("test_patterns", [])
+        self.test_patterns = [p.lower() for p in config.get("test_patterns", [])]
 
     def is_functional_change(self, parent_sha, commit_sha, file_path) -> bool:
         try:
@@ -278,7 +282,9 @@ class CommitAnalyzer:
         source_files = []
 
         for f in py_files:
-            is_test = any(pattern in f.filename for pattern in self.test_patterns)
+            is_test = any(
+                pattern in f.filename.lower() for pattern in self.test_patterns
+            )
             if is_test:
                 test_files.append(f.filename)
             else:
@@ -327,7 +333,6 @@ class CommitAnalyzer:
         log(f"    --> Source files: {file_categorization['source_files']}")
         log(f"    --> Test files: {file_categorization['test_files']}")
 
-        changed_files = file_categorization["all_files"]
         parent_sha = commit.parents[0].sha
         changed_code = any(
             self.is_functional_change(parent_sha, commit.sha, py_file.filename)
@@ -347,7 +352,8 @@ class CommitAnalyzer:
             "parent_commit_sha": parent_sha,
             "commit_message": commit_message.split("\n")[0],
             "commit_date": commit.commit.author.date.isoformat(),
-            "changed_files": changed_files,
+            "changed_source_files": file_categorization["source_files"],
+            "changed_test_files": file_categorization["test_files"],
             **issue_data,
         }
 
@@ -546,8 +552,14 @@ class CorpusBuilder:
                     f"Processing repo {repo_idx}/{total_repos}: {repo_name}",
                 )
 
+            # includes overall repo progress
+            def repo_progress_callback(current_bugs, max_bugs, message):
+                if progress_callback:
+                    enhanced_message = f"[Repo {repo_idx}/{total_repos}] {message}"
+                    progress_callback(current_bugs, max_bugs, enhanced_message)
+
             bugs = self._process_repository(
-                repo_name, progress_callback, stop_event, resume_event
+                repo_name, repo_progress_callback, stop_event, resume_event
             )
             all_bugs.extend(bugs)
 
