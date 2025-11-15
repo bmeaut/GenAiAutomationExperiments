@@ -335,6 +335,7 @@ class AnalysisPipeline:
                             max_snippets=5,
                             debug=True,
                             cache_dir=self.context_cache_dir,
+                            test_context_level=self.config.get("test_context_level", "assertions"),
                         )
 
                         context, context_text = builder.build_and_format(bug)

@@ -7,11 +7,14 @@ from typing import Any, Union
 from git import Repo
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from rank_bm25 import BM25Okapi
 
 from .logger import log
 from .ast_utility import ASTUtils
 
 CodeNode = Union[ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef]
+
+# TODO export cache handling?
 
 
 class ContextBuilder:
@@ -23,6 +26,7 @@ class ContextBuilder:
         max_snippets: int = 5,
         debug: bool = True,
         cache_dir: Path | None = None,
+        test_context_level: str = "assertions",
     ):
         repo_path = Path(repo_path)
 
@@ -31,6 +35,9 @@ class ContextBuilder:
         self.rag_retriever = RAGRetriever(repo_path, max_snippets)
         self.structural_analyzer = StructuralAnalyzer(repo_path)
         self.historical_analyzer = HistoricalAnalyzer(repo_path)
+        self.test_metadata_extractor = TestMetadataExtractor(
+            repo_path, test_context_level
+        )
         self.formatter = ContextFormatter(debug)
 
         self.cache_dir = cache_dir
@@ -45,42 +52,50 @@ class ContextBuilder:
             log("  --> Using cached context.")
             return cached_context
 
-        changed_files = bug.get("changed_files", [])
+        changed_source_files = bug.get("changed_source_files", [])
+        changed_test_files = bug.get("changed_test_files", [])
 
-        if not changed_files:
-            log("  --> WARNING: No changed_files provided!")
+        if not changed_source_files:
+            log("  --> WARNING: No changed_source_files provided!")
             return self._empty_context()
 
-        log(f"  --> Changed files to analyze: {changed_files}")
+        log(f"  --> Source files to analyze: {changed_source_files}")
+        log(f"  --> Test files (metadata only): {changed_test_files}")
 
-        existing_files = []
-        for file_path in changed_files:
+        existing_source_files = []
+        for file_path in changed_source_files:
             full_path = Path(self.aag_builder.repo_path) / file_path
             if full_path.exists():
                 log(f"      {file_path} exists")
-                existing_files.append(file_path)
+                existing_source_files.append(file_path)
             else:
                 log(f"      {file_path} MISSING at current commit")
 
-        if not existing_files:
-            log("  --> WARNING: No changed files at parent commit (all newly added?)")
+        if not existing_source_files:
+            log("  --> WARNING: No source files at parent commit (all newly added?)")
             return self._empty_context()
 
         log("  --> Building syntax graph...")
-        aag_context = self.aag_builder.build_syntax_graph(existing_files)
+        aag_context = self.aag_builder.build_syntax_graph(existing_source_files)
         log(
             f"      Found {len(aag_context.get('classes', {}))} classes, {len(aag_context.get('functions', {}))} functions"
         )
 
         log("  --> Finding relevant code snippets...")
-        # existing_files filters files that don't exist at parent commit
-        # changed_files might include newly added files
-        bug_with_existing = {**bug, "changed_files": existing_files}
+        # existing_source_files filters files that don't exist at parent commit
+        # changed_source_files might include newly added files
+        bug_with_existing = {
+            **bug,
+            "changed_source_files": existing_source_files,
+            "changed_test_files": changed_test_files,
+        }
         rag_context = self.rag_retriever.get_snippets(bug_with_existing)
         log(f"      Found {len(rag_context.get('snippets', []))} snippets")
 
         log("  --> Analyzing code structure...")
-        structural_info = self.structural_analyzer.analyze_structure(existing_files)
+        structural_info = self.structural_analyzer.analyze_structure(
+            existing_source_files
+        )
         log(
             f"      Found {len(structural_info.get('class_hierarchy', {}))} classes in hierarchy"
         )
@@ -91,11 +106,20 @@ class ContextBuilder:
             f"      Found {len(historical_info.get('recent_changes', []))} recent changes, {len(historical_info.get('related_commits', []))} related commits"
         )
 
+        log("  --> Extracting test metadata...")
+        test_metadata = self.test_metadata_extractor.extract_metadata(
+            changed_test_files
+        )
+        log(
+            f"      Found {len(test_metadata.get('test_functions', []))} test functions (level: {test_metadata.get('level', 'none')})"
+        )
+
         context = {
             "aag": aag_context,
             "rag": rag_context,
             "structural": structural_info,
             "historical": historical_info,
+            "test_metadata": test_metadata,
         }
 
         self._save_to_cache(bug, context)
@@ -113,6 +137,7 @@ class ContextBuilder:
             "rag": {"snippets": [], "relevance_scores": []},
             "structural": {"class_hierarchy": {}, "method_signatures": {}},
             "historical": {"recent_changes": [], "related_commits": []},
+            "test_metadata": {"test_functions": [], "level": "none"},
         }
 
     def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
@@ -278,7 +303,7 @@ class RAGRetriever:
         if not query.strip():
             log(f"      RAG: WARNING  Empty query - no issue title/body!")
         # debug
-        snippets = self._get_all_snippets(bug.get("changed_files", []))
+        snippets = self._get_all_snippets(bug.get("changed_source_files", []))
 
         log(f"      RAG: Extracted {len(snippets)} total snippets")  # debug
 
@@ -480,44 +505,98 @@ class RAGRetriever:
             "truncated": False,
         }
 
+    def _tokenize(self, text: str) -> list[str]:
+        """Tokenization for BM25."""
+        tokens = re.findall(r"\w+", text.lower())
+        stopwords = {
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "as",
+            "is",
+            "was",
+            "are",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "should",
+            "could",
+            "may",
+            "might",
+            "must",
+            "can",
+            "this",
+            "that",
+            "these",
+            "those",
+            "it",
+            "its",
+        }
+        return [token for token in tokens if token not in stopwords and len(token) > 1]
+
     def _rank_snippets(
         self, query: str, snippets: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Rank snippets with TF-IDF."""
-
-        # build data: query + snippet metadata
-        corpus = [query] + [
-            f"{s['name']} {s['signature']} {s['docstring']}" for s in snippets
-        ]
+        """Rank snippets with BM25."""
 
         try:
-            # TF-IDF stuff: TODO
-            vectorizer = TfidfVectorizer(stop_words="english", max_features=1000)
-            tfidf_matrix = vectorizer.fit_transform(corpus)
+            # snippet metadata
+            corpus_texts = [
+                f"{s['name']} {s['signature']} {s['docstring']}" for s in snippets
+            ]
 
-            # calculate similarity
-            query_vector = tfidf_matrix[0:1]  # type: ignore[index]
-            doc_vectors = tfidf_matrix[1:]  # type: ignore[index]
-            similarities = cosine_similarity(query_vector, doc_vectors).flatten()
+            tokenized_corpus = [self._tokenize(doc) for doc in corpus_texts]
 
-            # sort and keep only the best few
-            ranked_indices = similarities.argsort()[::-1]
+            # k1: term frequency saturation (default: 1.5)
+            # b: document length normalization (default: 0.75)
+            bm25 = BM25Okapi(tokenized_corpus, k1=1.5, b=0.75)
+            tokenized_query = self._tokenize(query)
+
+            # bm25 scores for each snippet
+            scores = bm25.get_scores(tokenized_query)
+
+            # get top snippets
+            ranked_indices = scores.argsort()[::-1]
             top_snippets = [
                 snippets[i]
                 for i in ranked_indices[: self.max_snippets]
                 if i < len(snippets)
             ]
+
+            # normalize scores to [0, 1] range
+            max_score = scores.max() if len(scores) > 0 and scores.max() > 0 else 1.0
             top_scores = [
-                float(similarities[i])
+                float(scores[i] / max_score)
                 for i in ranked_indices[: self.max_snippets]
-                if i < len(similarities)
+                if i < len(scores)
             ]
 
             return {"snippets": top_snippets, "relevance_scores": top_scores}
 
         except Exception as e:
             log(
-                f"Warning: TF-IDF ranking failed: {e}, returning first {self.max_snippets} snippets"
+                f"Warning: BM25 ranking failed: {e}, returning first {self.max_snippets} snippets"
             )
             return {
                 "snippets": snippets[: self.max_snippets],
@@ -594,7 +673,6 @@ class HistoricalAnalyzer:
 
     def analyze_history(self, bug: dict[str, Any]) -> dict[str, Any]:
         """Get history from git."""
-        # TODO: i got quite a few of these, where the class only has one public function, refactor needed?
         try:
             repo = Repo(self.repo_path)
 
@@ -613,7 +691,7 @@ class HistoricalAnalyzer:
     ) -> None:
         """Get recent commits of the changed files."""
 
-        for file_path in bug.get("changed_files", [])[:3]:  # limit to 3 files
+        for file_path in bug.get("changed_source_files", [])[:3]:  # limit to 3 files
             try:
                 commits = list(repo.iter_commits(paths=file_path, max_count=5))
 
@@ -698,11 +776,137 @@ class HistoricalAnalyzer:
         return [w for w in words if w not in stop_words and len(w) > 3]
 
 
+class TestMetadataExtractor:
+    """Extract test function names, docstrings, and assertions from test files."""
+
+    def __init__(self, repo_path: str | Path, level: str = "assertions"):
+        self.repo_path = Path(repo_path)
+        self.level = level  # "none", "names", "docstrings", "assertions"
+
+    def extract_metadata(self, test_files: list[str]) -> dict[str, Any]:
+        """Extract metadata from test files."""
+        if self.level == "none":
+            return {"test_functions": [], "level": "none"}
+
+        test_functions = []
+        for file_path in test_files:
+            functions = self._extract_from_file(file_path)
+            test_functions.extend(functions)
+
+        return {"test_functions": test_functions, "level": self.level}
+
+    def _extract_from_file(self, file_path: str) -> list[dict[str, Any]]:
+        """Extract test function metadata from a single file."""
+        full_path = self.repo_path / file_path
+
+        result = ASTUtils.parse_file(full_path)
+        if not result:
+            return []
+
+        tree, lines = result
+        functions = []
+
+        for node in ASTUtils.get_functions(tree, exclude_class_methods=False):
+            if not node.name.startswith("test_"):
+                continue
+
+            func_data = {
+                "file": file_path,
+                "name": node.name,
+                "line": node.lineno,
+            }
+
+            if self.level in ("docstrings", "assertions"):
+                docstring = ast.get_docstring(node) or ""
+                func_data["docstring"] = docstring
+
+            if self.level == "assertions":
+                assertions = self._extract_assertions(node, lines)
+                func_data["assertions"] = assertions
+
+            functions.append(func_data)
+
+        return functions
+
+    def _extract_assertions(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, lines: list[str]
+    ) -> list[str]:
+        """Extract assertion statements from a test function."""
+        assertions = []
+
+        for child in ast.walk(node):
+            if isinstance(child, ast.Assert):
+                try:
+                    if hasattr(child, "lineno") and child.lineno <= len(lines):
+                        line = lines[child.lineno - 1].strip()
+                        if line.startswith("assert"):
+                            assertions.append(line[:150])
+                except Exception:
+                    pass
+
+            # unittest-style assertions
+            elif isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Attribute):
+                    attr_name = child.func.attr
+                    if attr_name.startswith("assert") or attr_name in (
+                        "assertEqual",
+                        "assertNotEqual",
+                        "assertTrue",
+                        "assertFalse",
+                        "assertIs",
+                        "assertIsNot",
+                        "assertIsNone",
+                        "assertIsNotNone",
+                        "assertIn",
+                        "assertNotIn",
+                        "assertRaises",
+                    ):
+                        try:
+                            if hasattr(child, "lineno") and child.lineno <= len(lines):
+                                line = lines[child.lineno - 1].strip()
+                                assertions.append(line[:150])
+                        except Exception:
+                            pass
+
+        # no duplicates, max 10 assertions
+        seen = set()
+        unique_assertions = []
+        for assertion in assertions:
+            if assertion not in seen:
+                seen.add(assertion)
+                unique_assertions.append(assertion)
+                if len(unique_assertions) >= 10:
+                    break
+
+        return unique_assertions
+
+
 class ContextFormatter:
     """Turns the gathered info into LLM-friendly, formatted text."""
 
     def __init__(self, debug: bool = True):
         self.debug = debug
+
+    @staticmethod
+    def extract_metadata(context: dict[str, Any]) -> dict[str, Any]:
+        """Extract context metadata counts for CSV logging."""
+        return {
+            "context_classes_count": len(context.get("aag", {}).get("classes", {})),
+            "context_functions_count": len(context.get("aag", {}).get("functions", {})),
+            "context_snippets_count": len(context.get("rag", {}).get("snippets", [])),
+            "context_structural_classes_count": len(
+                context.get("structural", {}).get("class_hierarchy", {})
+            ),
+            "context_recent_changes_count": len(
+                context.get("historical", {}).get("recent_changes", [])
+            ),
+            "context_related_commits_count": len(
+                context.get("historical", {}).get("related_commits", [])
+            ),
+            "context_test_functions_count": len(
+                context.get("test_metadata", {}).get("test_functions", [])
+            ),
+        }
 
     def format(self, context: dict[str, Any]) -> str:
         """Collect and format text from all methods."""
@@ -715,6 +919,7 @@ class ContextFormatter:
         sections.append(self._format_rag(context.get("rag", {})))
         sections.append(self._format_structural(context.get("structural", {})))
         sections.append(self._format_historical(context.get("historical", {})))
+        sections.append(self._format_test_metadata(context.get("test_metadata", {})))
         result = "\n".join(s for s in sections if s.strip())
 
         if self.debug:
@@ -736,6 +941,10 @@ class ContextFormatter:
         )
         log(
             f"Related commits: {len(context.get('historical', {}).get('related_commits', []))}"
+        )
+        test_metadata = context.get("test_metadata", {})
+        log(
+            f"Test functions: {len(test_metadata.get('test_functions', []))} (level: {test_metadata.get('level', 'none')})"
         )
         log("=" * 60 + "\n")
 
@@ -851,5 +1060,47 @@ class ContextFormatter:
                 output.append(
                     f"  [{commit.get('sha', '?')}] {commit.get('message', '')}"
                 )
+
+        return "\n".join(output)
+
+    def _format_test_metadata(self, test_metadata: dict[str, Any]) -> str:
+        """Format the test requirements section."""
+        test_functions = test_metadata.get("test_functions", [])
+        level = test_metadata.get("level", "none")
+
+        if not test_functions or level == "none":
+            return ""
+
+        output = ["\n**TEST REQUIREMENTS:**"]
+
+        # group test functions
+        tests_by_file: dict[str, list[dict[str, Any]]] = {}
+        for func in test_functions:
+            file_path = func.get("file", "unknown")
+            if file_path not in tests_by_file:
+                tests_by_file[file_path] = []
+            tests_by_file[file_path].append(func)
+
+        for file_path, functions in tests_by_file.items():
+            output.append(f"\nFile: {file_path}")
+
+            for func in functions[:10]:  # max 10 func per file
+                func_name = func.get("name", "unknown")
+                output.append(f"  {func_name}():")
+
+                if level in ("docstrings", "assertions"):
+                    docstring = func.get("docstring", "")
+                    if docstring:
+                        doc_preview = docstring[:200].replace("\n", " ")
+                        if len(docstring) > 200:
+                            doc_preview += "..."
+                        output.append(f'    "{doc_preview}"')
+
+                if level == "assertions":
+                    assertions = func.get("assertions", [])
+                    if assertions:
+                        output.append("    Assertions:")
+                        for assertion in assertions[:10]:  # max 10 assertions
+                            output.append(f"      - {assertion}")
 
         return "\n".join(output)
