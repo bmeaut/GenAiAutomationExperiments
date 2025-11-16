@@ -296,6 +296,92 @@ class CommitAnalyzer:
             "all_files": [f.filename for f in py_files],
         }
 
+    def _extract_oracle_hints(
+        self, py_files: list, source_files: list[str]
+    ) -> dict[str, Any]:
+        """Extract function-level oracle hints from git diff."""
+        modified_functions = []
+
+        for f in py_files:
+            if f.filename not in source_files:
+                continue
+
+            if not f.patch:
+                continue
+
+            functions_in_file = self._parse_diff_for_functions(f.filename, f.patch)
+            modified_functions.extend(functions_in_file)
+
+        return {"modified_functions": modified_functions}
+
+    def _parse_diff_for_functions(
+        self, filename: str, patch: str
+    ) -> list[dict[str, Any]]:
+        """Parse a unified diff patch to extract modified function names."""
+        functions = []
+        seen_functions = set()
+
+        # @@ -10,5 +12,7 @@ def this_function(arg1, arg2):
+        # @@ -20,3 +22,5 @@ class CoolClass:
+        # @@ -30,4 +32,6 @@     def that_function(self):
+        hunk_pattern = re.compile(
+            r"^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@\s*(.*)$", re.MULTILINE
+        )
+
+        for match in hunk_pattern.finditer(patch):
+            context = match.group(3).strip()
+
+            func_name = self._extract_function_name(context)
+            if func_name and func_name not in seen_functions:
+                seen_functions.add(func_name)
+
+                hunk_start = match.end()
+                lines_changed = self._count_hunk_changes(patch, hunk_start)
+
+                functions.append(
+                    {
+                        "file": filename,
+                        "function": func_name,
+                        "lines_changed": lines_changed,
+                    }
+                )
+
+        return functions
+
+    def _extract_function_name(self, context: str) -> str | None:
+        """Extract function or method name from diff."""
+        if not context:
+            return None
+
+        # def this_func(
+        # async def that_func(
+        func_match = re.search(r"(?:async\s+)?def\s+(\w+)\s*\(", context)
+        if func_match:
+            return func_match.group(1)
+
+        # class CoolClass
+        class_match = re.search(r"class\s+(\w+)", context)
+        if class_match:
+            return class_match.group(1)
+
+        return None
+
+    def _count_hunk_changes(self, patch: str, start_pos: int) -> int:
+        """Count number of added/deleted lines in a hunk."""
+        count = 0
+        lines = patch[start_pos:].split("\n")
+
+        for line in lines:
+            if line.startswith("@@"):
+                # next hunk begins
+                break
+            if line.startswith("+") and not line.startswith("+++"):
+                count += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                count += 1
+
+        return count
+
     def process_commit(
         self, commit: Commit, keywords: list[str]
     ) -> dict[str, Any] | None:
@@ -345,6 +431,13 @@ class CommitAnalyzer:
             )
             return None
 
+        oracle_hints = self._extract_oracle_hints(
+            py_files, file_categorization["source_files"]
+        )
+        log(
+            f"    --> Oracle hints: {len(oracle_hints.get('modified_functions', []))} functions modified"
+        )
+
         # if all filters passed: valid data point (hopium)
         return {
             "repo_name": self.repo.full_name,
@@ -354,6 +447,7 @@ class CommitAnalyzer:
             "commit_date": commit.commit.author.date.isoformat(),
             "changed_source_files": file_categorization["source_files"],
             "changed_test_files": file_categorization["test_files"],
+            "oracle_hints": oracle_hints,
             **issue_data,
         }
 

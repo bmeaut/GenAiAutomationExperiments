@@ -27,6 +27,7 @@ class ContextBuilder:
         debug: bool = True,
         cache_dir: Path | None = None,
         test_context_level: str = "assertions",
+        oracle_level: str = "none",
     ):
         repo_path = Path(repo_path)
 
@@ -38,6 +39,7 @@ class ContextBuilder:
         self.test_metadata_extractor = TestMetadataExtractor(
             repo_path, test_context_level
         )
+        self.oracle_level = oracle_level
         self.formatter = ContextFormatter(debug)
 
         self.cache_dir = cache_dir
@@ -114,12 +116,18 @@ class ContextBuilder:
             f"      Found {len(test_metadata.get('test_functions', []))} test functions (level: {test_metadata.get('level', 'none')})"
         )
 
+        oracle_hints = bug.get("oracle_hints", {"modified_functions": []})
+        log(
+            f"  --> Oracle hints: {len(oracle_hints.get('modified_functions', []))} functions (level: {self.oracle_level})"
+        )
+
         context = {
             "aag": aag_context,
             "rag": rag_context,
             "structural": structural_info,
             "historical": historical_info,
             "test_metadata": test_metadata,
+            "oracle_hints": oracle_hints,
         }
 
         self._save_to_cache(bug, context)
@@ -138,6 +146,7 @@ class ContextBuilder:
             "structural": {"class_hierarchy": {}, "method_signatures": {}},
             "historical": {"recent_changes": [], "related_commits": []},
             "test_metadata": {"test_functions": [], "level": "none"},
+            "oracle_hints": {"modified_functions": []},
         }
 
     def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
@@ -200,7 +209,7 @@ class ContextBuilder:
     def build_and_format(self, bug: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
         context = self.build(bug)
-        formatted = self.formatter.format(context)
+        formatted = self.formatter.format(context, oracle_level=self.oracle_level)
         return context, formatted
 
 
@@ -906,9 +915,12 @@ class ContextFormatter:
             "context_test_functions_count": len(
                 context.get("test_metadata", {}).get("test_functions", [])
             ),
+            "context_oracle_functions_count": len(
+                context.get("oracle_hints", {}).get("modified_functions", [])
+            ),
         }
 
-    def format(self, context: dict[str, Any]) -> str:
+    def format(self, context: dict[str, Any], oracle_level: str = "none") -> str:
         """Collect and format text from all methods."""
 
         if self.debug:
@@ -920,6 +932,9 @@ class ContextFormatter:
         sections.append(self._format_structural(context.get("structural", {})))
         sections.append(self._format_historical(context.get("historical", {})))
         sections.append(self._format_test_metadata(context.get("test_metadata", {})))
+        sections.append(
+            self._format_oracle_hints(context.get("oracle_hints", {}), oracle_level)
+        )
         result = "\n".join(s for s in sections if s.strip())
 
         if self.debug:
@@ -946,6 +961,8 @@ class ContextFormatter:
         log(
             f"Test functions: {len(test_metadata.get('test_functions', []))} (level: {test_metadata.get('level', 'none')})"
         )
+        oracle_hints = context.get("oracle_hints", {})
+        log(f"Oracle functions: {len(oracle_hints.get('modified_functions', []))}")
         log("=" * 60 + "\n")
 
     def _log_result_info(self, result: str) -> None:
@@ -1102,5 +1119,37 @@ class ContextFormatter:
                         output.append("    Assertions:")
                         for assertion in assertions[:10]:  # max 10 assertions
                             output.append(f"      - {assertion}")
+
+        return "\n".join(output)
+
+    def _format_oracle_hints(
+        self, oracle_hints: dict[str, Any], oracle_level: str
+    ) -> str:
+        """Format oracle hints (fault localization) for LLM context."""
+        if oracle_level == "none" or not oracle_hints:
+            return ""
+
+        modified_functions = oracle_hints.get("modified_functions", [])
+        if not modified_functions:
+            return ""
+
+        output = ["\n**FAULT LOCALIZATION (Modified functions):**"]
+        output.append("The following functions were modified to fix this bug:\n")
+
+        functions_by_file: dict[str, list[dict[str, Any]]] = {}
+        for func in modified_functions:
+            file_path = func.get("file", "unknown")
+            if file_path not in functions_by_file:
+                functions_by_file[file_path] = []
+            functions_by_file[file_path].append(func)
+
+        for file_path, functions in functions_by_file.items():
+            output.append(f"File: {file_path}")
+            for func in functions:
+                func_name = func.get("function", "unknown")
+                lines_changed = func.get("lines_changed", 0)
+                output.append(f"  - {func_name} ({lines_changed} lines changed)")
+
+        output.append("\nNote: Focus on these functions when generating your fix.")
 
         return "\n".join(output)

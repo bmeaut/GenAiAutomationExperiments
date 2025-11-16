@@ -42,6 +42,7 @@ class BugAnalysisGUI(tk.Frame):
         self.llm_provider = tk.StringVar(value="manual")
         self.llm_model = tk.StringVar(value="gemini-2.5-flash")
         self.test_context_level = tk.StringVar(value="assertions")
+        self.oracle_level = tk.StringVar(value="none")
 
         self.threaded_mode = tk.StringVar(value="parallel")
         self.parallel_workers = tk.IntVar(value=5)
@@ -238,30 +239,30 @@ class BugAnalysisGUI(tk.Frame):
         llm_container = tk.Frame(parent)
         llm_container.pack(fill="x", padx=5, pady=5)
 
-        tk.Label(llm_container, text="LLM Provider:").pack(side="left", padx=5)
+        tk.Label(llm_container, text="LLM Provider:").pack(side="left", padx=1)
 
         provider_selector = ttk.Combobox(
             llm_container,
             textvariable=self.llm_provider,
             values=["manual", "gemini"],
             state="readonly",
-            width=15,
+            width=8,
         )
-        provider_selector.pack(side="left", padx=5)
+        provider_selector.pack(side="left", padx=1)
         provider_selector.bind("<<ComboboxSelected>>", self._on_llm_provider_changed)
 
-        tk.Label(llm_container, text="Model:").pack(side="left", padx=5)
+        tk.Label(llm_container, text="Model:").pack(side="left", padx=1)
 
         self.model_dropdown = ttk.Combobox(
             llm_container,
             textvariable=self.llm_model,
             values=["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
             state="readonly",
-            width=20,
+            width=15,
         )
-        self.model_dropdown.pack(side="left", padx=5)
+        self.model_dropdown.pack(side="left", padx=1)
 
-        tk.Label(llm_container, text="Test Context:").pack(side="left", padx=5)
+        tk.Label(llm_container, text="Test Context:").pack(side="left", padx=1)
 
         test_context_selector = ttk.Combobox(
             llm_container,
@@ -270,7 +271,18 @@ class BugAnalysisGUI(tk.Frame):
             state="readonly",
             width=12,
         )
-        test_context_selector.pack(side="left", padx=5)
+        test_context_selector.pack(side="left", padx=1)
+
+        tk.Label(llm_container, text="Oracle:").pack(side="left", padx=1)
+
+        oracle_level_selector = ttk.Combobox(
+            llm_container,
+            textvariable=self.oracle_level,
+            values=["none", "function"],
+            state="readonly",
+            width=10,
+        )
+        oracle_level_selector.pack(side="left", padx=1)
 
         # init dropdown state
         self._on_llm_provider_changed(None)
@@ -954,6 +966,7 @@ class BugAnalysisGUI(tk.Frame):
             self.llm_provider.set(config.get("llm_provider", "manual"))
             self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
             self.test_context_level.set(config.get("test_context_level", "assertions"))
+            self.oracle_level.set(config.get("oracle_level", "none"))
             self.parallel_workers.set(config.get("max_parallel_llm", 5))
             self.max_commits_per_repo.set(config.get("max_commits_per_repo", 3))
             self.commit_search_depth.set(config.get("commit_search_depth", 300))
@@ -977,6 +990,7 @@ class BugAnalysisGUI(tk.Frame):
         config_data["llm_provider"] = self.llm_provider.get()
         config_data["llm_model"] = self.llm_model.get()
         config_data["test_context_level"] = self.test_context_level.get()
+        config_data["oracle_level"] = self.oracle_level.get()
         config_data["max_parallel_llm"] = self.parallel_workers.get()
         config_data["max_commits_per_repo"] = self.max_commits_per_repo.get()
         config_data["commit_search_depth"] = self.commit_search_depth.get()

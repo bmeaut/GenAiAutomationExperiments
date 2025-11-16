@@ -336,6 +336,7 @@ class AnalysisPipeline:
                             debug=True,
                             cache_dir=self.context_cache_dir,
                             test_context_level=self.config.get("test_context_level", "assertions"),
+                            oracle_level=self.config.get("oracle_level", "none"),
                         )
 
                         context, context_text = builder.build_and_format(bug)
