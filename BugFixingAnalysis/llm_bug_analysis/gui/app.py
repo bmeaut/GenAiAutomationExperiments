@@ -278,7 +278,7 @@ class BugAnalysisGUI(tk.Frame):
         oracle_level_selector = ttk.Combobox(
             llm_container,
             textvariable=self.oracle_level,
-            values=["none", "function"],
+            values=["none", "function", "source"],
             state="readonly",
             width=10,
         )
@@ -540,6 +540,8 @@ class BugAnalysisGUI(tk.Frame):
         """Create pipeline with current settings."""
         config = json.loads(self.config_path.read_text())
         config["max_parallel_llm"] = self.parallel_workers.get()
+        config["test_context_level"] = self.test_context_level.get()
+        config["oracle_level"] = self.oracle_level.get()
 
         return AnalysisPipeline(
             config=config,

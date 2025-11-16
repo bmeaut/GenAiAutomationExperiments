@@ -121,6 +121,24 @@ class ContextBuilder:
             f"  --> Oracle hints: {len(oracle_hints.get('modified_functions', []))} functions (level: {self.oracle_level})"
         )
 
+        if self.oracle_level == "source" and oracle_hints.get("modified_functions"):
+            log("  --> Extracting source code for oracle functions...")
+            function_sources = self._extract_oracle_function_sources(oracle_hints)
+            oracle_hints["function_sources"] = function_sources
+            if not function_sources:
+                log(
+                    f"      WARNING: No function sources extracted! Check logs above for errors."
+                )
+            else:
+                log(f"      Extracted {len(function_sources)} function sources")
+        elif self.oracle_level == "source":
+            log(
+                f"      WARNING: oracle_level is 'source' but no modified_functions in oracle_hints"
+            )
+            oracle_hints["function_sources"] = {}
+        else:
+            oracle_hints["function_sources"] = {}
+
         issue_comments = bug.get("issue_comments", [])
         log(f"  --> Issue comments: {len(issue_comments)} comments")
 
@@ -150,7 +168,7 @@ class ContextBuilder:
             "structural": {"class_hierarchy": {}, "method_signatures": {}},
             "historical": {"recent_changes": [], "related_commits": []},
             "test_metadata": {"test_functions": [], "level": "none"},
-            "oracle_hints": {"modified_functions": []},
+            "oracle_hints": {"modified_functions": [], "function_sources": {}},
             "issue_comments": [],
         }
 
@@ -206,6 +224,70 @@ class ContextBuilder:
 
         except Exception as e:
             log(f"  --> ERROR: saving cache file: {e}")
+
+    def _extract_oracle_function_sources(
+        self, oracle_hints: dict[str, Any]
+    ) -> dict[str, str]:
+        """Extract actual source code for functions mentioned in oracle hints."""
+        function_sources = {}
+        modified_functions = oracle_hints.get("modified_functions", [])
+
+        log(f"      Repo path: {self.aag_builder.repo_path}")
+        log(f"      Functions to extract: {len(modified_functions)}")
+
+        for i, func_info in enumerate(modified_functions, 1):
+            file_path = func_info.get("file", "")
+            func_name = func_info.get("function", "")
+
+            log(
+                f"      [{i}/{len(modified_functions)}] Extracting {func_name} from {file_path}"
+            )
+
+            if not file_path or not func_name:
+                log(f"        SKIP: Missing file_path or func_name")
+                continue
+
+            full_path = Path(self.aag_builder.repo_path) / file_path
+            log(f"        Full path: {full_path}")
+            log(f"        Exists: {full_path.exists()}")
+
+            if not full_path.exists():
+                log(f"        ERROR: File not found at {full_path}")
+                continue
+
+            source = self._extract_single_function_source(full_path, func_name)
+            if source:
+                key = f"{file_path}::{func_name}"
+                function_sources[key] = source
+                log(f"        SUCCESS: Extracted {len(source.splitlines())} lines")
+            else:
+                log(f"        ERROR: Function {func_name} not found in AST")
+
+        log(f"      Total extracted: {len(function_sources)} sources")
+        return function_sources
+
+    def _extract_single_function_source(
+        self, file_path: Path, func_name: str
+    ) -> str | None:
+        """Extract source code of a single function from a file."""
+        try:
+            source_code = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(source_code)
+            lines = source_code.splitlines(keepends=True)
+
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name == func_name:
+                        start_line = node.lineno - 1  # 0-indexed
+                        end_line = node.end_lineno  #  inclusive
+                        func_lines = lines[start_line:end_line]
+                        return "".join(func_lines)
+
+            return None
+
+        except Exception as e:
+            log(f"      ERROR extracting {func_name}: {e}")
+            return None
 
     def format(self, context: dict[str, Any]) -> str:
         """Turn context into LLM friendly text."""
@@ -945,6 +1027,9 @@ class ContextFormatter:
         sections.append(
             self._format_oracle_hints(context.get("oracle_hints", {}), oracle_level)
         )
+        sections.append(
+            self._format_buggy_code(context.get("oracle_hints", {}), oracle_level)
+        )
         sections.append(self._format_issue_comments(context.get("issue_comments", [])))
         result = "\n".join(s for s in sections if s.strip())
 
@@ -1192,5 +1277,42 @@ class ContextFormatter:
 
         if len(comments) > 20:
             output.append(f"... and {len(comments) - 20} more comments")
+
+        return "\n".join(output)
+
+    def _format_buggy_code(
+        self, oracle_hints: dict[str, Any], oracle_level: str
+    ) -> str:
+        """Format the actual source code of buggy functions for LLM context."""
+        if oracle_level != "source":
+            return ""
+
+        function_sources = oracle_hints.get("function_sources", {})
+        if not function_sources:
+            return ""
+
+        output = ["\n**BUGGY CODE (Functions to Fix):**"]
+        output.append("The following functions contain the bug and need to be fixed:\n")
+
+        for key, source_code in function_sources.items():
+            # key: "file_path::function_name"
+            parts = key.split("::")
+            if len(parts) >= 2:
+                file_path = parts[0]
+                func_name = parts[1]
+            else:
+                file_path = "unknown"
+                func_name = key
+
+            output.append(f"File: {file_path}")
+            output.append(f"Function: {func_name}")
+            output.append("```python")
+            output.append(source_code.rstrip())
+            output.append("```")
+            output.append("")
+
+        output.append(
+            "Note: Fix the bug in the function(s) above while preserving the overall structure."
+        )
 
         return "\n".join(output)
