@@ -92,7 +92,9 @@ class IssueLinker:
         self.repo = repo
         self.filter = bug_filter
 
-    def extract_issue_data(self, commit_message: str) -> dict[str, str] | None:
+    def extract_issue_data(
+        self, commit_message: str, commit_date: str | None = None
+    ) -> dict[str, Any] | None:
         """Extract issue data from commit message."""
         issue_number = self._find_primary_issue(commit_message)
         if not issue_number:
@@ -102,9 +104,9 @@ class IssueLinker:
             issue = self.repo.get_issue(number=issue_number)
 
             if issue.pull_request:
-                return self._process_pull_request(issue)
+                return self._process_pull_request(issue, commit_date)
             else:
-                return self._process_issue(issue)
+                return self._process_issue(issue, commit_date)
 
         except GithubException:
             log(
@@ -142,46 +144,71 @@ class IssueLinker:
 
         return None
 
-    def _create_issue_data(self, title: str, body: str, source: str) -> dict[str, str]:
+    def _create_issue_data(
+        self,
+        title: str,
+        body: str,
+        source: str,
+        comments: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         log(f"    --> Got {source}: {title}")
         return {
             "issue_title": title,
             "issue_body": body or "No description provided.",
+            "issue_comments": comments or [],
         }
 
-    def _process_issue(self, issue: Issue) -> dict[str, str]:
+    def _process_issue(
+        self, issue: Issue, commit_date: str | None = None
+    ) -> dict[str, Any]:
         """Get data from a direct issue reference."""
         log(f"    --> Found Issue #{issue.number}: {issue.title}")
 
         if self.filter.has_bug_label(issue):
             log(f"    --> Has bug label")
 
+        comments = []
+        if commit_date:
+            comments = self._fetch_comments_before_date(issue, commit_date)
+
         return self._create_issue_data(
-            issue.title, issue.body or "", f"Issue #{issue.number}"
+            issue.title, issue.body or "", f"Issue #{issue.number}", comments
         )
 
-    def _process_pull_request(self, pr: Issue) -> dict[str, str] | None:
+    def _process_pull_request(
+        self, pr: Issue, commit_date: str | None = None
+    ) -> dict[str, Any] | None:
         """Get bug data from PR."""
         log(f"    --> Found PR #{pr.number}: {pr.title}")
 
         pr_body = pr.body or ""
 
-        linked_issue = self._find_linked_issue(pr_body)
+        linked_issue = self._find_linked_issue(pr_body, commit_date)
         if linked_issue:
             return linked_issue
 
+        comments = []
+        if commit_date:
+            comments = self._fetch_comments_before_date(pr, commit_date)
+
         if self.filter.has_bug_label(pr):
             log(f"    --> Has bug label")
-            return self._create_issue_data(pr.title, pr_body, "PR description")
+            return self._create_issue_data(
+                pr.title, pr_body, "PR description", comments
+            )
 
         if self.filter.is_likely_bug_fix(pr.title, pr_body):
             log(f"    --> Looks like a bug fix based on keywords")
-            return self._create_issue_data(pr.title, pr_body, "PR description")
+            return self._create_issue_data(
+                pr.title, pr_body, "PR description", comments
+            )
 
         log(f"    --> Not a bug fix, skipping PR #{pr.number}.")
         return None
 
-    def _find_linked_issue(self, pr_body: str) -> dict[str, str] | None:
+    def _find_linked_issue(
+        self, pr_body: str, commit_date: str | None = None
+    ) -> dict[str, Any] | None:
         """Look for 'Fixes #123' style issue links with pattern matching."""
         # - fix/fixes/fixed/fixing, close/closes/closed/closing, resolve/resolves/resolved/resolving
         # - "fixes #123", "fixes: #123", "fixes:#123"
@@ -209,10 +236,16 @@ class IssueLinker:
 
                 if has_bug_label or is_bug_fix:
                     log(f"    --> Linked PR #{linked_number} appears to be bug-related")
+                    comments = []
+                    if commit_date:
+                        comments = self._fetch_comments_before_date(
+                            linked_issue, commit_date
+                        )
                     return self._create_issue_data(
                         linked_issue.title,
                         linked_issue.body or "",
                         f"PR #{linked_number} (regression fix)",
+                        comments,
                     )
                 else:
                     log(
@@ -223,13 +256,48 @@ class IssueLinker:
             if self.filter.has_bug_label(linked_issue):
                 log(f"    --> Linked issue has bug label")
 
+            comments = []
+            if commit_date:
+                comments = self._fetch_comments_before_date(linked_issue, commit_date)
+
             return self._create_issue_data(
-                linked_issue.title, linked_issue.body or "", f"Issue #{linked_number}"
+                linked_issue.title,
+                linked_issue.body or "",
+                f"Issue #{linked_number}",
+                comments,
             )
 
         except GithubException:
             log(f"    --> WARNING: Could not fetch linked Issue #{linked_number}.")
             return None
+
+    def _fetch_comments_before_date(
+        self, issue: Issue, commit_date: str
+    ) -> list[dict[str, str]]:
+        """Fetch issue comments made before the bug-fixing commit date."""
+        from datetime import datetime
+
+        comments = []
+        try:
+            commit_datetime = datetime.fromisoformat(commit_date.replace("Z", "+00:00"))
+
+            for comment in issue.get_comments():
+                if comment.created_at < commit_datetime:
+                    comments.append(
+                        {
+                            "body": comment.body or "",
+                            "author": comment.user.login if comment.user else "unknown",
+                            "created_at": comment.created_at.isoformat(),
+                        }
+                    )
+
+            if comments:
+                log(f"    --> Found {len(comments)} comments before commit date")
+
+        except Exception as e:
+            log(f"    --> WARNING: Could not fetch comments: {e}")
+
+        return comments
 
 
 class CommitAnalyzer:
@@ -396,8 +464,10 @@ class CommitAnalyzer:
         if not any(keyword in commit_message.lower() for keyword in keywords):
             return None
 
+        commit_date = commit.commit.author.date.isoformat()
+
         # must be linked to a real issue
-        issue_data = self.issue_linker.extract_issue_data(commit_message)
+        issue_data = self.issue_linker.extract_issue_data(commit_message, commit_date)
         if not issue_data:
             return None
 
@@ -444,7 +514,7 @@ class CommitAnalyzer:
             "bug_commit_sha": commit.sha,
             "parent_commit_sha": parent_sha,
             "commit_message": commit_message.split("\n")[0],
-            "commit_date": commit.commit.author.date.isoformat(),
+            "commit_date": commit_date,
             "changed_source_files": file_categorization["source_files"],
             "changed_test_files": file_categorization["test_files"],
             "oracle_hints": oracle_hints,

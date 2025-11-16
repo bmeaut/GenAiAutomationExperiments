@@ -121,6 +121,9 @@ class ContextBuilder:
             f"  --> Oracle hints: {len(oracle_hints.get('modified_functions', []))} functions (level: {self.oracle_level})"
         )
 
+        issue_comments = bug.get("issue_comments", [])
+        log(f"  --> Issue comments: {len(issue_comments)} comments")
+
         context = {
             "aag": aag_context,
             "rag": rag_context,
@@ -128,6 +131,7 @@ class ContextBuilder:
             "historical": historical_info,
             "test_metadata": test_metadata,
             "oracle_hints": oracle_hints,
+            "issue_comments": issue_comments,
         }
 
         self._save_to_cache(bug, context)
@@ -147,6 +151,7 @@ class ContextBuilder:
             "historical": {"recent_changes": [], "related_commits": []},
             "test_metadata": {"test_functions": [], "level": "none"},
             "oracle_hints": {"modified_functions": []},
+            "issue_comments": [],
         }
 
     def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
@@ -306,7 +311,12 @@ class RAGRetriever:
     def get_snippets(self, bug: dict[str, Any]) -> dict[str, Any]:
         """Find the most relevant code for this bug."""
 
-        query = f"{bug.get('issue_title', '')} {bug.get('issue_body', '')}"
+        comments_text = " ".join(
+            [c.get("body", "") for c in bug.get("issue_comments", [])]
+        )
+        query = (
+            f"{bug.get('issue_title', '')} {bug.get('issue_body', '')} {comments_text}"
+        )
         # debug
         log(f"      RAG: Query length: {len(query)} chars")
         if not query.strip():
@@ -935,6 +945,7 @@ class ContextFormatter:
         sections.append(
             self._format_oracle_hints(context.get("oracle_hints", {}), oracle_level)
         )
+        sections.append(self._format_issue_comments(context.get("issue_comments", [])))
         result = "\n".join(s for s in sections if s.strip())
 
         if self.debug:
@@ -963,6 +974,7 @@ class ContextFormatter:
         )
         oracle_hints = context.get("oracle_hints", {})
         log(f"Oracle functions: {len(oracle_hints.get('modified_functions', []))}")
+        log(f"Issue comments: {len(context.get('issue_comments', []))}")
         log("=" * 60 + "\n")
 
     def _log_result_info(self, result: str) -> None:
@@ -1151,5 +1163,34 @@ class ContextFormatter:
                 output.append(f"  - {func_name} ({lines_changed} lines changed)")
 
         output.append("\nNote: Focus on these functions when generating your fix.")
+
+        return "\n".join(output)
+
+    def _format_issue_comments(self, comments: list[dict[str, Any]]) -> str:
+        """Format issue comments for LLM context."""
+        if not comments:
+            return ""
+
+        output = ["\n**ISSUE DISCUSSION:**"]
+        output.append("Comments from the issue discussion (before the fix):\n")
+
+        for i, comment in enumerate(comments[:20], 1):  # max 20 comments
+            author = comment.get("author", "unknown")
+            created_at = comment.get("created_at", "")
+            body = comment.get("body", "")
+
+            # truncate
+            if len(body) > 500:
+                body = body[:500] + "..."
+
+            # clean up
+            body = body.replace("\n\n", "\n").strip()
+
+            output.append(f"Comment {i} by {author} ({created_at}):")
+            output.append(f"  {body}")
+            output.append("")
+
+        if len(comments) > 20:
+            output.append(f"... and {len(comments) - 20} more comments")
 
         return "\n".join(output)
