@@ -93,9 +93,11 @@ class ProjectHandler:
         """Validate patch with failure analysis."""
         return self.patch_validator.validate_patch(Path(patch_file_path))
 
-    def apply_patch(self, patch_file_path: str) -> bool:
-        """Apply patch with multiple fallback strategies."""
-        return self.patch_applicator.apply_patch(Path(patch_file_path))
+    def apply_patch(self, patch_file_path: str, intent: dict[str, Any]) -> bool:
+        """Apply patch with git apply first, then AST fallback."""
+        return self.patch_applicator.apply_with_intent_fallback(
+            Path(patch_file_path), intent
+        )
 
     def cleanup(self):
         """Delete temp directory."""

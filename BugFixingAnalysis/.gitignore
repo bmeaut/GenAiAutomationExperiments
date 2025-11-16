@@ -21,7 +21,7 @@ venv_cache/
 
 # application output
 /llm_bug_analysis/results/
-/llm_bug_analysis/corpus.json
+/llm_bug_analysis/*corpus.json
 
 # backup files
 *.backup

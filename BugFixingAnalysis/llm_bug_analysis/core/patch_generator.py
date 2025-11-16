@@ -371,7 +371,8 @@ class PatchGenerator:
             return None
 
     def _validate_intent(self, intent: dict[str, Any]) -> str | None:
-        """Check if required fields are there."""
+        """Validate intent schema and against actual codebase."""
+        # json schema validation
         required = ["target_file", "new_code"]
         for field in required:
             if field not in intent:
@@ -390,4 +391,57 @@ class PatchGenerator:
             if missing:
                 return f"modify_lines needs: {', '.join(missing)}"
 
+        # codebase validation
+        target_file = self.repo_path / intent["target_file"]
+        if not target_file.exists():
+            return f"File not found: {intent['target_file']}"
+
+        source = self._load_source(intent["target_file"])
+        if not source:
+            return "Cannot load source file"
+
+        try:
+            locator = CodeLocator(source)
+        except ValueError as e:
+            return f"Cannot parse source file: {e}"
+
+        if fix_type == "replace_method":
+            method = intent.get("target_method")
+            target_class = intent.get("target_class")
+            if isinstance(method, str):
+                start = locator.find_method_start(method, target_class)
+                if start is None:
+                    available = self._list_available_methods(locator, target_class)
+                    return f"Method '{method}' not found in {intent['target_file']}. Available: {available}"
+                log(f"  --> Validation: Found '{method}' at line {start + 1}")
+
+        if fix_type == "add_method":
+            strategy = intent.get("insertion_strategy", {})
+            anchor = strategy.get("anchor")
+            if anchor and strategy.get("type") in ["after_method", "before_method"]:
+                target_class = intent.get("target_class")
+                if not locator.find_method_start(anchor, target_class):
+                    available = self._list_available_methods(locator, target_class)
+                    return f"Anchor method '{anchor}' not found. Available: {available}"
+
         return None
+
+    def _list_available_methods(
+        self, locator: CodeLocator, target_class: str | None = None
+    ) -> str:
+        """List available method names for error messages."""
+        methods = []
+        for node in ASTUtils.get_functions(locator.tree, include_async=True):
+            if target_class:
+                parent = ASTUtils.find_parent_class(node, locator.tree)
+                if parent and parent.name == target_class:
+                    methods.append(node.name)
+            else:
+                # module-level functions
+                parent = ASTUtils.find_parent_class(node, locator.tree)
+                if not parent:
+                    methods.append(node.name)
+
+        if not methods:
+            return "(none found)"
+        return ", ".join(methods[:10]) + ("..." if len(methods) > 10 else "")
