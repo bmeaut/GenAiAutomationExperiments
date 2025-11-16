@@ -28,7 +28,7 @@ class CodeLocator:
                 if class_name:
                     parent = ASTUtils.find_parent_class(node, self.tree)
                     if parent and parent.name == class_name:
-                        return node.lineno - 1  # AST uses 1-indexed, use 0-indexed
+                        return node.lineno - 1  # AST uses 1-indexed
                 else:
                     return node.lineno - 1
         return None
@@ -43,7 +43,7 @@ class CodeLocator:
                     parent = ASTUtils.find_parent_class(node, self.tree)
                     if not parent or parent.name != class_name:
                         continue
-                return node.end_lineno  # TODO: index modification needed here?
+                return node.end_lineno
         return None
 
     def find_class_start(self, class_name: str) -> int | None:
@@ -57,7 +57,7 @@ class CodeLocator:
         """Find line after a class ends."""
         for node in ASTUtils.get_classes(self.tree):
             if node.name == class_name:
-                return node.end_lineno  # TODO: index modification needed here?
+                return node.end_lineno
         return None
 
     def find_insertion_point(

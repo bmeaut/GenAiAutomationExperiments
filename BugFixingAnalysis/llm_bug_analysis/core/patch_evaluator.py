@@ -36,14 +36,11 @@ class PatchEvaluator:
         handler: ProjectHandler,
         parent_sha: str,
         changed_source_files: list,
-        changed_test_files: list,
-        debug_mode: bool,
         llm_fix: dict[str, Any],
     ) -> dict[str, Any]:
         """Evaluate pre-generated AI fix from stage 2."""
         log("  Evaluating AI Fix with AAG/RAG...")
 
-        # TODO: validate LLM results, here or somewhere else?
         if not llm_fix or not llm_fix.get("intent"):
             log("  --> ERROR: Invalid or missing llm_fix from stage 2.")
             return self._failed_results("INTENT_PARSE_FAILED")
@@ -89,9 +86,8 @@ class PatchEvaluator:
             handler,
             parent_sha,
             changed_source_files,
-            changed_test_files,
             bug,
-            debug_mode,
+            intent,
         )
 
         result["llm_metadata"] = metadata
@@ -102,7 +98,6 @@ class PatchEvaluator:
         handler: ProjectHandler,
         fix_sha: str,
         changed_source_files: list,
-        changed_test_files: list,
         bug: dict[str, Any],
     ) -> dict[str, Any]:
         """Test human written fix."""
@@ -151,9 +146,8 @@ class PatchEvaluator:
         handler: ProjectHandler,
         parent_sha: str,
         changed_source_files: list,
-        changed_test_files: list,
         bug: dict[str, Any],
-        debug_mode: bool,
+        intent: dict[str, Any],
     ) -> dict[str, Any]:
         """Apply AI patch and run tests."""
         import time
@@ -170,11 +164,7 @@ class PatchEvaluator:
             self.debug_helper.log_validation_errors(validation)
             self.debug_helper.save_debug_info(validation, bug)
 
-        # try to apply
-        ok = handler.apply_patch(str(patch_file))
-
-        if not ok and debug_mode:
-            ok = self.debug_helper.handle_patch_failure(str(patch_file), bug, handler)
+        ok = handler.apply_patch(str(patch_file), intent)
 
         if not ok:
             handler.reset_to_commit(parent_sha)

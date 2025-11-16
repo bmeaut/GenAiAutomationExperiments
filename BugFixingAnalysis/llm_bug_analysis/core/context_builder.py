@@ -662,7 +662,6 @@ class RAGRetriever:
         """Rank snippets with BM25."""
 
         try:
-            # snippet metadata
             corpus_texts = [
                 f"{s['name']} {s['signature']} {s['docstring']}" for s in snippets
             ]
@@ -673,11 +672,9 @@ class RAGRetriever:
             # b: document length normalization (default: 0.75)
             bm25 = BM25Okapi(tokenized_corpus, k1=1.5, b=0.75)
             tokenized_query = self._tokenize(query)
-
-            # bm25 scores for each snippet
             scores = bm25.get_scores(tokenized_query)
 
-            # get top snippets
+            # top snippets
             ranked_indices = scores.argsort()[::-1]
             top_snippets = [
                 snippets[i]
@@ -685,7 +682,7 @@ class RAGRetriever:
                 if i < len(snippets)
             ]
 
-            # normalize scores to [0, 1] range
+            # normalize scores
             max_score = scores.max() if len(scores) > 0 and scores.max() > 0 else 1.0
             top_scores = [
                 float(scores[i] / max_score)
@@ -1071,7 +1068,6 @@ class ContextFormatter:
 
     def _format_aag(self, aag: dict[str, Any]) -> str:
         """Format the syntax graph."""
-        # TODO: is this being here hurting encapsulation?
         output = []
 
         if aag.get("classes"):
@@ -1264,11 +1260,9 @@ class ContextFormatter:
             created_at = comment.get("created_at", "")
             body = comment.get("body", "")
 
-            # truncate
             if len(body) > 500:
                 body = body[:500] + "..."
 
-            # clean up
             body = body.replace("\n\n", "\n").strip()
 
             output.append(f"Comment {i} by {author} ({created_at}):")
@@ -1295,7 +1289,7 @@ class ContextFormatter:
         output.append("The following functions contain the bug and need to be fixed:\n")
 
         for key, source_code in function_sources.items():
-            # key: "file_path::function_name"
+
             parts = key.split("::")
             if len(parts) >= 2:
                 file_path = parts[0]

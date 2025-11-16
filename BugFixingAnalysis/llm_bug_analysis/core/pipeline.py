@@ -335,7 +335,9 @@ class AnalysisPipeline:
                             max_snippets=5,
                             debug=True,
                             cache_dir=self.context_cache_dir,
-                            test_context_level=self.config.get("test_context_level", "assertions"),
+                            test_context_level=self.config.get(
+                                "test_context_level", "assertions"
+                            ),
                             oracle_level=self.config.get("oracle_level", "none"),
                         )
 
@@ -766,9 +768,7 @@ class AnalysisPipeline:
         try:
             results = {**bug, **context_metadata}
 
-            before = self._analyze_before(
-                handler, parent_sha, changed_source_files, changed_test_files
-            )
+            before = self._analyze_before(handler, changed_test_files)
             results["comp_before"] = before
 
             if self.skip_llm_fix:
@@ -780,8 +780,6 @@ class AnalysisPipeline:
                     handler=handler,
                     parent_sha=parent_sha,
                     changed_source_files=changed_source_files,
-                    changed_test_files=changed_test_files,
-                    debug_mode=self.debug_on_failure,
                     llm_fix=llm_result,
                 )
                 results["ai_results"] = ai
@@ -793,7 +791,6 @@ class AnalysisPipeline:
                 handler,
                 fix_sha,
                 changed_source_files,
-                changed_test_files,
                 bug,
             )
             results["human_results"] = human
@@ -855,9 +852,7 @@ class AnalysisPipeline:
     def _analyze_before(
         self,
         handler: ProjectHandler,
-        parent_sha: str,
         changed_source_files: list,
-        changed_test_files: list,
     ) -> dict[str, Any]:
         """Measure complexity before the fix."""
         log("  Analyzing 'before' state...")

@@ -1,12 +1,8 @@
 from __future__ import annotations
 import ast
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from .logger import log
-
-if TYPE_CHECKING:
-    from typing import Any  # TODO: in other files as well?
 
 
 class ASTUtils:
