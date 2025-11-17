@@ -92,22 +92,15 @@ class AnalysisPipeline:
         self.results_logger = ResultsLogger(results_path)
         self.debug_helper = DebugHelper(self.project_root)
 
-        self.context_cache_dir = project_root / ".cache" / "contexts"
-        self.context_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        self.llm_response_cache_dir = project_root / ".cache" / "llm_responses"
-        self.llm_response_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_manager = CacheManager(self.project_root)
 
         self.patch_evaluator = PatchEvaluator(
             test_command=self.test_command,
             config=self.config,
             debug_helper=self.debug_helper,
             project_root=self.project_root,
-            context_cache_dir=self.context_cache_dir,
-            llm_response_cache_dir=self.llm_response_cache_dir,
+            cache_manager=self.cache_manager,
         )
-
-        self.cache_manager = CacheManager(self.project_root)
 
     @contextmanager
     def _terminal_context(self, title: str):
@@ -123,21 +116,6 @@ class AnalysisPipeline:
         finally:
             if started_here and self.terminal_manager:
                 self.terminal_manager.stop_persistent_terminal()
-
-    def _get_bug_cache_path(self, bug: dict[str, Any]) -> Path | None:
-        """Get cache file path for a bug."""
-        # TODO: from contextbuilder, should restructure?
-
-        if not self.context_cache_dir:
-            return None
-
-        repo_name = bug.get("repo_name", "unknown_repo")
-        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
-
-        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-        repo_cache_dir = self.context_cache_dir / safe_repo_name
-
-        return repo_cache_dir / f"{commit_sha[:12]}.json"
 
     def _extract_formatted_context(self, cached_context: dict[str, Any]) -> str:
         """Extract formatted text from cached context."""
@@ -217,12 +195,6 @@ class AnalysisPipeline:
                 f"\nSUCCESS: Stage 1 complete: {len(all_contexts)}/{total_bugs} contexts built"
             )
 
-            self.cache_manager.save_json_cache(
-                "stage1_contexts.json",
-                all_contexts,
-                f"Contexts saved to {self.cache_manager.cache_dir / 'stage1_contexts.json'}",
-            )
-
             return all_contexts
 
     def _build_contexts_for_repo(
@@ -243,41 +215,33 @@ class AnalysisPipeline:
             bug_sha = bug.get("bug_commit_sha", "unknown")
             bug_key = f"{repo_name.replace('/', '_')}_{bug_sha[:12]}"
 
-            cache_path = self._get_bug_cache_path(bug)
+            cached = self.cache_manager.load_entity_cache(
+                "contexts",
+                repo_name,
+                bug_sha,
+                required_keys={"aag", "rag", "structural", "historical"},
+            )
 
-            if cache_path and cache_path.exists():
-                try:
-                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if cached:
+                formatted_context = self._extract_formatted_context(cached)
+                changed_source_files = bug.get("changed_source_files", [])
+                changed_test_files = bug.get("changed_test_files", [])
+                if not changed_source_files:
+                    log(f"    No Python source files changed (check corpus.json).")
+                    continue
 
-                    required_keys = {"aag", "rag", "structural", "historical"}
-                    if not all(key in cached for key in required_keys):
-                        log(f"    [{bug_sha[:7]}] Cache invalid, will rebuild")
-                        uncached_bugs.append(bug)
-                        continue
+                # context metadata for csv logging
+                from .context_builder import ContextFormatter
 
-                    formatted_context = self._extract_formatted_context(cached)
-                    changed_source_files = bug.get("changed_source_files", [])
-                    changed_test_files = bug.get("changed_test_files", [])
-                    if not changed_source_files:
-                        log(f"    No Python source files changed (check corpus.json).")
-                        continue
-
-                    # context metadata for csv logging
-                    from .context_builder import ContextFormatter
-
-                    context_metadata = ContextFormatter.extract_metadata(cached)
-                    contexts[bug_key] = {
-                        "bug": bug,
-                        "formatted_context": formatted_context,
-                        "changed_source_files": changed_source_files,
-                        "changed_test_files": changed_test_files,
-                        "context_metadata": context_metadata,
-                    }
-                    log(f"    [{bug_sha[:7]}] loaded from cache.")
-
-                except Exception as e:
-                    log(f"    [{bug_sha[:7]}] Cache error: {e}, will rebuild")
-                    uncached_bugs.append(bug)
+                context_metadata = ContextFormatter.extract_metadata(cached)
+                contexts[bug_key] = {
+                    "bug": bug,
+                    "formatted_context": formatted_context,
+                    "changed_source_files": changed_source_files,
+                    "changed_test_files": changed_test_files,
+                    "context_metadata": context_metadata,
+                }
+                log(f"    [{bug_sha[:7]}] loaded from cache.")
 
             else:
                 uncached_bugs.append(bug)
@@ -312,7 +276,7 @@ class AnalysisPipeline:
 
                     bug_sha = bug.get("bug_commit_sha", "unknown")
                     parent_sha = bug.get("parent_commit_sha", "unknown")
-                    bug_key = f"{repo_name}_{bug_sha[:12]}"
+                    bug_key = f"{repo_name.replace('/', '_')}_{bug_sha[:12]}"
 
                     if progress_callback:
                         progress_callback(i, total, f"Building context: {bug_key}")
@@ -334,7 +298,7 @@ class AnalysisPipeline:
                             repo_path=handler.repo_path,
                             max_snippets=5,
                             debug=True,
-                            cache_dir=self.context_cache_dir,
+                            cache_manager=self.cache_manager,
                             test_context_level=self.config.get(
                                 "test_context_level", "assertions"
                             ),
@@ -383,15 +347,11 @@ class AnalysisPipeline:
             stop_event = threading.Event()
 
         if contexts is None:
-            contexts = self.cache_manager.load_json_cache(
-                "stage1_contexts.json",
-                dict,
-                "No contexts found!\n   Run stage 1 to build contexts.",
-                "Invalid contexts format",
-                return_on_error={},
-            )
+            contexts = self.cache_manager.load_all_contexts()
             if not contexts:
+                log("No cached contexts found. Run Stage 1 first.")
                 return {}
+            log(f"Loaded {len(contexts)} contexts from cache")
 
         else:
             if not isinstance(contexts, dict):
@@ -412,12 +372,6 @@ class AnalysisPipeline:
 
         log(
             f"\nSUCCESS: Stage 2 complete: {len(patches)}/{len(contexts)} patches generated"
-        )
-
-        self.cache_manager.save_json_cache(
-            "stage2_patches.json",
-            patches,
-            f"Patches saved to {self.cache_manager.cache_dir / 'stage2_patches.json'}",
         )
 
         return patches
@@ -568,15 +522,10 @@ class AnalysisPipeline:
             if patches is None:
 
                 if self.skip_llm_fix:
-                    log("Skip mode: Loading contexts from Stage 1...")
-                    contexts = self.cache_manager.load_json_cache(
-                        "stage1_contexts.json",
-                        dict,
-                        "No contexts found!\n   Run Stage 1 to build contexts first.",
-                        "Invalid contexts format",
-                        return_on_error=None,
-                    )
-                    if contexts is None:
+                    log("Skip mode: Loading contexts from cache...")
+                    contexts = self.cache_manager.load_all_contexts()
+                    if not contexts:
+                        log("No cached contexts found. Run Stage 1 first.")
                         return
 
                     patches = {
@@ -596,15 +545,13 @@ class AnalysisPipeline:
                     log(f"Loaded {len(patches)} bugs from contexts (skip mode)")
 
                 else:
-                    patches = self.cache_manager.load_json_cache(
-                        "stage2_patches.json",
-                        dict,
-                        "No patches found!\n   Run Stage 2 to generate patches.",
-                        "Invalid patches format",
-                        return_on_error=None,
+                    patches = self.cache_manager.load_all_patches(
+                        self.llm_provider, self.llm_model
                     )
-                    if patches is None:
+                    if not patches:
+                        log("No cached patches found. Run Stage 2 first.")
                         return
+                    log(f"Loaded {len(patches)} patches from cache")
 
             else:
                 if not isinstance(patches, dict):
@@ -893,7 +840,7 @@ class AnalysisPipeline:
             "applied_ok": "SKIPPED",
             "tests_passed": "SKIPPED",
             "test_stats": {"passed": 0, "failed": 0, "skipped": 0, "errors": 0},
-            "test_time_seconds": "SKIPPED",
+            "test_time_seconds": 0.0,
             "complexity": {
                 "total_cc": "SKIPPED",
                 "total_cognitive": "SKIPPED",
@@ -912,7 +859,7 @@ class AnalysisPipeline:
                 "completion_tokens": "SKIPPED",
                 "thinking_tokens": "SKIPPED",
                 "total_tokens": "SKIPPED",
-                "generation_time_seconds": "SKIPPED",
+                "generation_time_seconds": 0.0,
             },
         }
 

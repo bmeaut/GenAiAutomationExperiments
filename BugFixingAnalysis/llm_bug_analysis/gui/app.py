@@ -8,6 +8,7 @@ from ..core import logger
 from ..core.pipeline import AnalysisPipeline
 from ..core.logger import log
 from ..core.corpus_builder import CorpusBuilder
+from ..core.cache_manager import CacheManager
 
 
 class ANSIColor:
@@ -62,6 +63,8 @@ class BugAnalysisGUI(tk.Frame):
         self.spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.spinner_index = 0
         self.spinner_base_message = ""
+
+        self.cache_manager = CacheManager(self.project_root)
 
         self.pack(pady=20, padx=20, fill="both", expand=True)
         self._create_widgets()
@@ -389,7 +392,7 @@ class BugAnalysisGUI(tk.Frame):
             1: {
                 "name": "Build Contexts",
                 "status": "Building contexts...",
-                "prereq_file": None,
+                "prereq_check": lambda: True,
                 "prereq_message": None,
                 "runner": lambda p: p.run_stage_1_build_contexts(
                     self.bug_corpus,
@@ -401,11 +404,8 @@ class BugAnalysisGUI(tk.Frame):
             2: {
                 "name": "Generate Patches",
                 "status": f"Generating patches ({self.threaded_mode.get()})...",
-                "prereq_file": self.project_root
-                / ".cache"
-                / "pipeline_stages"
-                / "stage1_contexts.json",
-                "prereq_message": "No context found!\n\nRun Stage 1 to build contexts.",
+                "prereq_check": lambda: self.cache_manager.has_cached_contexts(),
+                "prereq_message": "No cached contexts found!\n\nRun Stage 1 to build contexts.",
                 "runner": lambda p: p.run_stage_2_generate_patches(
                     None,  # load from cache
                     self.threaded_mode.get(),
@@ -416,21 +416,17 @@ class BugAnalysisGUI(tk.Frame):
             3: {
                 "name": "Test Patches",
                 "status": "Testing patches...",
-                "prereq_file": (
-                    self.project_root
-                    / ".cache"
-                    / "pipeline_stages"
-                    / "stage1_contexts.json"
+                "prereq_check": (
+                    lambda: self.cache_manager.has_cached_contexts()
                     if self.dry_run_enabled.get()
-                    else self.project_root
-                    / ".cache"
-                    / "pipeline_stages"
-                    / "stage2_patches.json"
+                    else self.cache_manager.has_cached_patches(
+                        self.llm_provider.get(), self.llm_model.get()
+                    )
                 ),
                 "prereq_message": (
-                    "No contexts found!\n\nRun Stage 1 to build contexts."
+                    "No cached contexts found!\n\nRun Stage 1 to build contexts."
                     if self.dry_run_enabled.get()
-                    else "No patches found!\n\nRun Stage 2 to generate patches."
+                    else "No cached patches found!\n\nRun Stage 2 to generate patches."
                 ),
                 "runner": lambda p: p.run_stage_3_test_patches(
                     None,  # load from cache
@@ -443,7 +439,7 @@ class BugAnalysisGUI(tk.Frame):
 
         config = stage_config[stage_num]
 
-        if config["prereq_file"] and not config["prereq_file"].exists():
+        if not config["prereq_check"]():
             messagebox.showerror("Error", config["prereq_message"])
             return
 
@@ -638,32 +634,7 @@ class BugAnalysisGUI(tk.Frame):
 
     def _clear_context_cache(self):
         """Clear all cached contexts."""
-        import shutil
-
-        cache_root = self.project_root / ".cache"
-
-        cleared = []
-
-        # clear contexts
-        context_cache = cache_root / "contexts"
-        if context_cache.exists():
-            shutil.rmtree(context_cache)
-            context_cache.mkdir(parents=True)
-            cleared.append("contexts")
-
-        # clear llm responses
-        llm_cache = cache_root / "llm_responses"
-        if llm_cache.exists():
-            shutil.rmtree(llm_cache)
-            llm_cache.mkdir(parents=True)
-            cleared.append("llm_responses")
-
-        # clear pipeline stages
-        stages_cache = cache_root / "pipeline_stages"
-        if stages_cache.exists():
-            shutil.rmtree(stages_cache)
-            stages_cache.mkdir(parents=True)
-            cleared.append("pipeline_stages")
+        cleared = self.cache_manager.clear_entity_caches()
 
         if cleared:
             msg = f"Cleared: {', '.join(cleared)}"
@@ -736,7 +707,7 @@ class BugAnalysisGUI(tk.Frame):
             repo_path=handler.repo_path,
             max_snippets=5,
             debug=True,
-            cache_dir=self.project_root / ".cache" / "contexts",
+            cache_manager=self.cache_manager,
         )
 
         context, formatted = builder.build_and_format(bug)
@@ -813,8 +784,38 @@ class BugAnalysisGUI(tk.Frame):
                     self._update_spinner_message(
                         f"Generating patch for {repo_name}:{bug_sha}"
                     )
+
+                    bug_key = f"{repo_name.replace('/', '_')}_{bug.get('bug_commit_sha', '')[:12]}"
+
+                    entity_context = self.cache_manager.load_entity_cache(
+                        "contexts",
+                        repo_name,
+                        bug.get("bug_commit_sha", ""),
+                        required_keys={"aag", "rag", "structural", "historical"},
+                    )
+                    if not entity_context:
+                        log(f"ERROR: No cached context found for {bug_key}")
+                        return
+
+                    log(f"Loaded context from cache for {bug_key}")
+                    from ..core.context_builder import ContextFormatter
+
+                    formatter = ContextFormatter(debug=False)
+                    formatted_context = formatter.format(entity_context)
+                    context_metadata = ContextFormatter.extract_metadata(entity_context)
+
+                    filtered_contexts = {
+                        bug_key: {
+                            "bug": bug,
+                            "formatted_context": formatted_context,
+                            "changed_source_files": bug.get("changed_source_files", []),
+                            "changed_test_files": bug.get("changed_test_files", []),
+                            "context_metadata": context_metadata,
+                        }
+                    }
+
                     pipeline.run_stage_2_generate_patches(
-                        None,  # load contexts from cache
+                        filtered_contexts,
                         self.threaded_mode.get(),
                         self.stop_event,
                         self._create_progress_updater(),
@@ -825,24 +826,32 @@ class BugAnalysisGUI(tk.Frame):
                         f"Testing patch for {repo_name}:{bug_sha}"
                     )
 
-                    cache_file = (
-                        self.project_root
-                        / ".cache"
-                        / "pipeline_stages"
-                        / "stage2_patches.json"
+                    bug_key = f"{repo_name.replace('/', '_')}_{bug.get('bug_commit_sha', '')[:12]}"
+                    provider = self.llm_provider.get()
+                    model = self.llm_model.get()
+                    suffix = f"_{provider}_{model}"
+
+                    llm_result = self.cache_manager.load_entity_cache(
+                        "llm_responses",
+                        repo_name,
+                        bug.get("bug_commit_sha", ""),
+                        suffix=suffix,
+                        required_keys={"intent", "provider", "model"},
                     )
-                    if not cache_file.exists():
-                        log("ERROR: No patches found. Run Stage 2 first.")
+                    if not llm_result:
+                        log(f"ERROR: No cached patch found for {bug_key}")
                         return
 
-                    all_patches = json.loads(cache_file.read_text())
-                    bug_key = f"{repo_name}_{bug.get('bug_commit_sha', '')[:12]}"
-
-                    if bug_key not in all_patches:
-                        log(f"ERROR: No patch found for {bug_key}")
-                        return
-
-                    filtered_patches = {bug_key: all_patches[bug_key]}
+                    log(f"Loaded patch from cache for {bug_key}")
+                    filtered_patches = {
+                        bug_key: {
+                            "bug": bug,
+                            "llm_result": llm_result,
+                            "changed_source_files": bug.get("changed_source_files", []),
+                            "changed_test_files": bug.get("changed_test_files", []),
+                            "context_metadata": {},
+                        }
+                    }
 
                     pipeline.run_stage_3_test_patches(
                         filtered_patches,

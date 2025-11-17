@@ -2,11 +2,14 @@ import re
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from abc import ABC, abstractmethod
 
 from .llm_providers import get_llm_provider, LLMProvider
 from .logger import log
+
+if TYPE_CHECKING:
+    from .cache_manager import CacheManager
 
 FILE_WRITE_DELAY = 0.5
 
@@ -249,14 +252,10 @@ class LLMManager:
     def __init__(
         self,
         project_root: Path,
-        context_cache_dir: Path | None = None,
-        llm_response_cache_dir: Path | None = None,
+        cache_manager: "CacheManager | None" = None,
     ):
         self.project_root = Path(project_root)
-        self.context_cache_dir = context_cache_dir
-        self.llm_response_cache_dir = llm_response_cache_dir
-        if llm_response_cache_dir:
-            llm_response_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_manager = cache_manager
 
     def generate_fix(
         self,
@@ -270,10 +269,22 @@ class LLMManager:
 
         start_time = time.time()
 
-        cached_result = self._load_from_cache(bug, provider, model)
-        if cached_result is not None:
-            log("  --> Loaded result from cache")
-            return cached_result
+        repo_name = bug.get("repo_name", "unknown_repo")
+        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+        safe_model = model.replace("/", "_").replace(":", "_")
+        cache_suffix = f"_{provider}_{safe_model}"
+
+        if self.cache_manager:
+            cached_result = self.cache_manager.load_entity_cache(
+                "llm_responses",
+                repo_name,
+                commit_sha,
+                suffix=cache_suffix,
+                required_keys={"intent", "provider", "model"},
+            )
+            if cached_result is not None:
+                log("  --> Loaded result from cache")
+                return cached_result
 
         prompt = self._build_prompt(bug, context_text)
 
@@ -295,7 +306,10 @@ class LLMManager:
                 "model": result_model,
                 "metadata": {**metadata, "generation_time_seconds": generation_time},
             }
-            self._save_to_cache(bug, provider, model, empty_result)
+            if self.cache_manager:
+                self.cache_manager.save_entity_cache(
+                    "llm_responses", repo_name, commit_sha, empty_result, cache_suffix
+                )
             return empty_result
 
         log(f"  --> Response: ({len(text)} chars)")
@@ -313,80 +327,12 @@ class LLMManager:
             "model": result_model,
             "metadata": {**metadata, "generation_time_seconds": generation_time},
         }
-        # TODO: add back context later to save into results,
-        # or should it be saved where it is created, so I don't
-        # pass it along everywhere?
 
-        self._save_to_cache(bug, provider, model, final_result)
+        if self.cache_manager:
+            self.cache_manager.save_entity_cache(
+                "llm_responses", repo_name, commit_sha, final_result, cache_suffix
+            )
         return final_result
-
-    def _get_cache_path(
-        self,
-        bug: dict[str, Any],
-        provider: str,
-        model: str,
-    ) -> Path | None:
-        """Get cache path for this bug and LLM combo."""
-        if not self.llm_response_cache_dir:
-            return None
-
-        repo_name = bug.get("repo_name", "unknown_repo")
-        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
-
-        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-
-        repo_cache_dir = self.llm_response_cache_dir / safe_repo_name
-        repo_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        safe_model = model.replace("/", "_").replace(":", "_")
-        cache_filename = f"{commit_sha[:12]}_{provider}_{safe_model}.json"
-
-        return repo_cache_dir / cache_filename
-
-    def _load_from_cache(
-        self,
-        bug: dict[str, Any],
-        provider: str,
-        model: str,
-    ) -> dict[str, Any] | None:
-        """Load LLM result from cache if it exists."""
-        cache_path = self._get_cache_path(bug, provider, model)
-
-        if not cache_path or not cache_path.exists():
-            return None
-
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-
-            required_keys = {"intent", "provider", "model"}
-            if not all(key in cached for key in required_keys):
-                log("  --> WARNING: Patch cache invalid")
-                return None
-
-            return cached
-
-        except Exception as e:
-            log(f"  --> WARNING: Failed to load patch cache: {e}")
-            return None
-
-    def _save_to_cache(
-        self,
-        bug: dict[str, Any],
-        provider: str,
-        model: str,
-        result: dict[str, Any],
-    ) -> None:
-        """Save LLM result to cache."""
-        cache_path = self._get_cache_path(bug, provider, model)
-
-        if not cache_path:
-            return
-
-        try:
-            cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-            log(f"  --> Patch cached to: {cache_path}")
-        except Exception as e:
-            log(f"  --> WARNING: Failed to save patch cache: {e}")
 
     def _build_prompt(
         self,

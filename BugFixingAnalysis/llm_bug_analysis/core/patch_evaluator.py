@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .logger import log
 from .project_handler import ProjectHandler
@@ -7,6 +7,9 @@ from .analysis import analyze_files
 from .patch_generator import PatchGenerator
 from .debug_helper import DebugHelper
 from .llm_manager import LLMManager
+
+if TYPE_CHECKING:
+    from .cache_manager import CacheManager
 
 
 class PatchEvaluator:
@@ -18,17 +21,13 @@ class PatchEvaluator:
         config: dict[str, Any],
         debug_helper: DebugHelper,
         project_root: Path,
-        context_cache_dir: Path | None = None,
-        llm_response_cache_dir: Path | None = None,
+        cache_manager: "CacheManager | None" = None,
     ):
         self.test_command = test_command
         self.config = config
         self.debug_helper = debug_helper
         self.project_root = Path(project_root)
-        self.context_cache_dir = context_cache_dir
-        self.llm_manager = LLMManager(
-            project_root, context_cache_dir, llm_response_cache_dir
-        )
+        self.llm_manager = LLMManager(project_root, cache_manager)
 
     def evaluate_ai_fix(
         self,

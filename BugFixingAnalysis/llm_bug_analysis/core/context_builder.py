@@ -14,7 +14,10 @@ from .ast_utility import ASTUtils
 
 CodeNode = Union[ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef]
 
-# TODO export cache handling?
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .cache_manager import CacheManager
 
 
 class ContextBuilder:
@@ -25,7 +28,7 @@ class ContextBuilder:
         repo_path: str | Path,
         max_snippets: int = 5,
         debug: bool = True,
-        cache_dir: Path | None = None,
+        cache_manager: CacheManager | None = None,
         test_context_level: str = "assertions",
         oracle_level: str = "none",
     ):
@@ -42,17 +45,23 @@ class ContextBuilder:
         self.oracle_level = oracle_level
         self.formatter = ContextFormatter(debug)
 
-        self.cache_dir = cache_dir
-        if cache_dir:
-            cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_manager = cache_manager
 
     def build(self, bug: dict[str, Any]) -> dict[str, Any]:
         """Build from all methods."""
 
-        cached_context = self._load_from_cache(bug)
-        if cached_context is not None:
-            log("  --> Using cached context.")
-            return cached_context
+        if self.cache_manager:
+            repo_name = bug.get("repo_name", "unknown_repo")
+            commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+            cached_context = self.cache_manager.load_entity_cache(
+                "contexts",
+                repo_name,
+                commit_sha,
+                required_keys={"aag", "rag", "structural", "historical"},
+            )
+            if cached_context is not None:
+                log("  --> Using cached context.")
+                return cached_context
 
         changed_source_files = bug.get("changed_source_files", [])
         changed_test_files = bug.get("changed_test_files", [])
@@ -152,7 +161,13 @@ class ContextBuilder:
             "issue_comments": issue_comments,
         }
 
-        self._save_to_cache(bug, context)
+        if self.cache_manager:
+            repo_name = bug.get("repo_name", "unknown_repo")
+            commit_sha = bug.get("bug_commit_sha", "unknown_sha")
+            self.cache_manager.save_entity_cache(
+                "contexts", repo_name, commit_sha, context
+            )
+
         return context
 
     def _empty_context(self) -> dict[str, Any]:
@@ -171,59 +186,6 @@ class ContextBuilder:
             "oracle_hints": {"modified_functions": [], "function_sources": {}},
             "issue_comments": [],
         }
-
-    def _get_cache_path(self, bug: dict[str, Any]) -> Path | None:
-        """Get cache file path for this bug."""
-        if not self.cache_dir:
-            return None
-
-        repo_name = bug.get("repo_name", "unknown_repo")
-        commit_sha = bug.get("bug_commit_sha", "unknown_sha")
-
-        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-
-        repo_cached_dir = self.cache_dir / safe_repo_name
-        repo_cached_dir.mkdir(parents=True, exist_ok=True)
-
-        cache_filename = f"{commit_sha[:12]}.json"
-
-        return repo_cached_dir / cache_filename
-
-    def _load_from_cache(self, bug: dict[str, Any]) -> dict[str, Any] | None:
-        """Load context from cache if it exists."""
-        cache_path = self._get_cache_path(bug)
-
-        if not cache_path or not cache_path.exists():
-            return None
-
-        try:
-            cached = json.loads(cache_path.read_text(encoding="utf-8"))
-
-            required_keys = {"aag", "rag", "structural", "historical"}
-            if not all(key in cached for key in required_keys):
-                log("  --> Cache missing required keys, rebuilding...")
-                return None
-
-            return cached
-
-        except Exception as e:
-            log(f"  --> ERROR: loading cache file: {e}, rebuilding...")
-            return None
-
-    def _save_to_cache(self, bug: dict[str, Any], context: dict[str, Any]) -> None:
-        """Save context to cache."""
-        cache_path = self._get_cache_path(bug)
-
-        if not cache_path:
-            return
-
-        try:
-            cache_path.write_text(json.dumps(context, indent=2), encoding="utf-8")
-
-            log(f"  --> Saved context to cache: {cache_path.name}")
-
-        except Exception as e:
-            log(f"  --> ERROR: saving cache file: {e}")
 
     def _extract_oracle_function_sources(
         self, oracle_hints: dict[str, Any]
