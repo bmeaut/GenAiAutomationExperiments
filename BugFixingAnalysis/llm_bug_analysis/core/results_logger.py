@@ -164,3 +164,18 @@ class ResultsLogger:
                     + bug_data.get("env_setup_time_seconds", 0),
                 ]
             )
+
+    def entry_exists(self, repo_name: str, bug_commit_sha: str) -> bool:
+        """Check if result for this repo+commit already exists in results.csv."""
+        if not self.results_path.exists():
+            return False
+
+        with open(self.results_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if (
+                    row.get("repo_name") == repo_name
+                    and row.get("bug_commit_sha") == bug_commit_sha
+                ):
+                    return True
+        return False

@@ -824,8 +824,28 @@ class BugAnalysisGUI(tk.Frame):
                     self._update_spinner_message(
                         f"Testing patch for {repo_name}:{bug_sha}"
                     )
+
+                    cache_file = (
+                        self.project_root
+                        / ".cache"
+                        / "pipeline_stages"
+                        / "stage2_patches.json"
+                    )
+                    if not cache_file.exists():
+                        log("ERROR: No patches found. Run Stage 2 first.")
+                        return
+
+                    all_patches = json.loads(cache_file.read_text())
+                    bug_key = f"{repo_name}_{bug.get('bug_commit_sha', '')[:12]}"
+
+                    if bug_key not in all_patches:
+                        log(f"ERROR: No patch found for {bug_key}")
+                        return
+
+                    filtered_patches = {bug_key: all_patches[bug_key]}
+
                     pipeline.run_stage_3_test_patches(
-                        None,  # load patches from cache
+                        filtered_patches,
                         self.resume_event,
                         self.stop_event,
                         self._create_progress_updater(),

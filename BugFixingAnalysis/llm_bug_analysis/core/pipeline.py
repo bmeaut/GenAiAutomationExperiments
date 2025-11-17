@@ -682,6 +682,22 @@ class AnalysisPipeline:
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         """Test all patches for one repository."""
+
+        untested_patches = [
+            p
+            for p in repo_patches
+            if not self.results_logger.entry_exists(
+                repo_name, p.get("bug", {}).get("bug_commit_sha", "")
+            )
+        ]
+
+        if not untested_patches:
+            log(f"  All {len(repo_patches)} patches already tested - skipping repo")
+            return
+
+        log(f"  {len(untested_patches)}/{len(repo_patches)} patches need testing")
+        repo_patches = untested_patches
+
         if progress_callback:
             progress_callback(0, len(repo_patches), f"Cloning {repo_name}...")
 
