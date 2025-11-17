@@ -46,6 +46,20 @@ class PatchEvaluator:
             return self._failed_results("INTENT_PARSE_FAILED")
 
         intent = llm_fix["intent"]
+
+        # llm returned a list instead of dict (or something else, TODO:)
+        if isinstance(intent, list):
+            if len(intent) > 0 and isinstance(intent[0], dict):
+                log("  --> WARNING: Intent is a list, using first element")
+                intent = intent[0]
+            else:
+                log("  --> ERROR: Intent is a list but not valid format")
+                return self._failed_results("INTENT_INVALID_TYPE")
+
+        if not isinstance(intent, dict):
+            log(f"  --> ERROR: Intent is not a dict, got {type(intent).__name__}")
+            return self._failed_results("INTENT_INVALID_TYPE")
+
         log(f"  --> Fix Analysis: {intent.get('analysis', 'N/A')}")
         log(f"  --> Fix Type: {intent.get('fix_type', 'N/A')}")
         log(

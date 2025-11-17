@@ -59,6 +59,7 @@ class TestExecutor:
         cmd = self._add_repo_exclusions(cmd, config, repo_name)
         cmd = self._add_global_ignores(cmd)
         cmd = self._add_test_directory_if_needed(cmd)
+        cmd = self._add_non_interactive_flags(cmd)
         cmd = self._add_pytest_xdist_if_available(cmd)
 
         return cmd
@@ -156,6 +157,25 @@ class TestExecutor:
                 cmd.append(test_dir)
                 log(f"    --> Auto-added '{test_dir}' directory")
                 break
+
+        return cmd
+
+    def _add_non_interactive_flags(self, cmd: list[str]) -> list[str]:
+        """Add flags to prevent hanging/interactive prompts."""
+        if "-m" not in cmd or "pytest" not in cmd:
+            return cmd
+
+        flags = [
+            "--tb=no",
+            "--no-cov",
+            "--continue-on-collection-errors",  # don't stop for import errors
+            "-W",
+            "ignore::DeprecationWarning",
+        ]
+
+        for flag in flags:
+            if flag not in cmd:
+                cmd.append(flag)
 
         return cmd
 
@@ -324,10 +344,10 @@ class TestExecutor:
         else:
             log(f"    --> Tests FAILED: {summary}")
             error = subprocess.CalledProcessError(0, cmd, stdout, "")
-            log_path = debug_helper.save_test_failure_log(
-                repo_name, commit_sha, run_type, error
-            )
-            log(f"    --> Logs: {log_path}")
+            # log_path = debug_helper.save_test_failure_log( # TODO: do i really need this?
+            #     repo_name, commit_sha, run_type, error
+            # )
+            # log(f"    --> Logs: {log_path}")
 
     def _extract_summary(self, stdout: str) -> tuple[str, dict[str, int]]:
         """Extract the pytest summary line and parse stats."""
@@ -339,22 +359,44 @@ class TestExecutor:
 
         stats = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
 
+        has_thread_error = self._has_thread_exception(clean_stdout)
+        if has_thread_error:
+            log("    --> WARNING: Detected thread exception in output")
+            stats["errors"] = 1
+
         # try to find the summary line
         pattern = r"=+\s*(.+?)\s+in\s+[\d.]+s?\s*=+"
         match = re.search(pattern, clean_stdout, re.IGNORECASE)
 
         if match:
             summary_text = match.group(1).strip()
-            stats = self._parse_summary_text(summary_text)
+            parsed_stats = self._parse_summary_text(summary_text)
+            stats["passed"] = parsed_stats["passed"]
+            stats["failed"] = parsed_stats["failed"]
+            stats["skipped"] = parsed_stats["skipped"]
+            stats["errors"] = max(stats["errors"], parsed_stats["errors"])
             return summary_text, stats
 
         # search for passed/failed anywhere in output
         if "passed" in clean_stdout.lower():
-            stats = self._parse_fallback_stats(clean_stdout)
+            parsed_stats = self._parse_fallback_stats(clean_stdout)
+            stats["passed"] = parsed_stats["passed"]
+            stats["failed"] = parsed_stats["failed"]
             summary_text = self._build_summary_from_stats(stats)
             return summary_text, stats
 
+        if has_thread_error:
+            return "Thread exception detected (no pytest summary)", stats
+
         return "No summary found", stats
+
+    def _has_thread_exception(self, output: str) -> bool:
+        """Check if output contains thread exception markers."""
+        markers = [
+            "Exception in thread",
+            "During handling of the above exception, another exception occurred",
+        ]
+        return any(marker in output for marker in markers)
 
     def _parse_summary_text(self, summary_text: str) -> dict[str, int]:
         """Parse pytest summary text into stats."""
