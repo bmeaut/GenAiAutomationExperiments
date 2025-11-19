@@ -132,6 +132,8 @@ class CacheManager:
                     "changed_test_files": bug.get("changed_test_files", []),
                     "context_metadata": context_metadata,
                 }
+            # else:
+            #     log(f"  WARNING: No cached context found for {bug_key[:40]}")
 
         return contexts
 
@@ -147,6 +149,7 @@ class CacheManager:
             if not corpus:
                 return {}
 
+        contexts = self.load_all_contexts()
         patches = {}
         suffix = f"_{provider}_{model}"
 
@@ -169,8 +172,10 @@ class CacheManager:
                     "llm_result": llm_result,
                     "changed_source_files": bug.get("changed_source_files", []),
                     "changed_test_files": bug.get("changed_test_files", []),
-                    "context_metadata": {},
+                    "context_metadata": contexts[bug_key]["context_metadata"],
                 }
+            # else:
+            #     log(f"  WARNING: No cached LLM response for {bug_key[:40]}")
 
         return patches
 

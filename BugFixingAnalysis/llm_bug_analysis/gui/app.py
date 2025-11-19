@@ -422,10 +422,12 @@ class BugAnalysisGUI(tk.Frame):
                 "name": "Test Patches",
                 "status": "Testing patches...",
                 "prereq_check": (
-                    lambda: self.cache_manager.has_cached_contexts()
-                    if self.dry_run_enabled.get()
-                    else self.cache_manager.has_cached_patches(
-                        self.llm_provider.get(), self.llm_model.get()
+                    lambda: (
+                        self.cache_manager.has_cached_contexts()
+                        if self.dry_run_enabled.get()
+                        else self.cache_manager.has_cached_patches(
+                            self.llm_provider.get(), self.llm_model.get()
+                        )
                     )
                 ),
                 "prereq_message": (
@@ -792,22 +794,9 @@ class BugAnalysisGUI(tk.Frame):
 
                     bug_key = f"{repo_name.replace('/', '_')}_{bug.get('bug_commit_sha', '')[:12]}"
 
-                    entity_context = self.cache_manager.load_entity_cache(
-                        "contexts",
-                        repo_name,
-                        bug.get("bug_commit_sha", ""),
-                        required_keys={"aag", "rag", "structural", "historical"},
-                    )
-                    if not entity_context:
-                        log(f"ERROR: No cached context found for {bug_key}")
-                        return
-
-                    log(f"Loaded context from cache for {bug_key}")
-                    from ..core.context_builder import ContextFormatter
-
-                    formatter = ContextFormatter(debug=False)
-                    formatted_context = formatter.format(entity_context)
-                    context_metadata = ContextFormatter.extract_metadata(entity_context)
+                    contexts = self.cache_manager.load_all_contexts()
+                    formatted_context = contexts[bug_key]["formatted_context"]
+                    context_metadata = contexts[bug_key]["context_metadata"]
 
                     filtered_contexts = {
                         bug_key: {
@@ -832,29 +821,21 @@ class BugAnalysisGUI(tk.Frame):
                     )
 
                     bug_key = f"{repo_name.replace('/', '_')}_{bug.get('bug_commit_sha', '')[:12]}"
-                    provider = self.llm_provider.get()
-                    model = self.llm_model.get()
-                    suffix = f"_{provider}_{model}"
 
-                    llm_result = self.cache_manager.load_entity_cache(
-                        "llm_responses",
-                        repo_name,
-                        bug.get("bug_commit_sha", ""),
-                        suffix=suffix,
-                        required_keys={"intent", "provider", "model"},
+                    patches = self.cache_manager.load_all_patches(
+                        self.llm_provider.get(), self.llm_model.get()
                     )
-                    if not llm_result:
-                        log(f"ERROR: No cached patch found for {bug_key}")
-                        return
+                    llm_result = patches[bug_key]["llm_result"]
+                    context_metadata = patches[bug_key]["context_metadata"]
 
                     log(f"Loaded patch from cache for {bug_key}")
                     filtered_patches = {
                         bug_key: {
                             "bug": bug,
-                            "llm_result": llm_result,
+                            "llm_result": llm_result if llm_result else {},
                             "changed_source_files": bug.get("changed_source_files", []),
                             "changed_test_files": bug.get("changed_test_files", []),
-                            "context_metadata": {},
+                            "context_metadata": context_metadata,
                         }
                     }
 

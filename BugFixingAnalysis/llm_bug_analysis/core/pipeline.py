@@ -531,7 +531,7 @@ class AnalysisPipeline:
                     patches = {
                         bug_key: {
                             "bug": ctx_data["bug"],
-                            "llm_result": None,  # no llm stuff in skip mode
+                            "llm_result": None,
                             "changed_source_files": ctx_data.get(
                                 "changed_source_files", []
                             ),
@@ -539,6 +539,7 @@ class AnalysisPipeline:
                                 "changed_test_files", []
                             ),
                             "context_metadata": ctx_data.get("context_metadata", {}),
+                            "skipped": True,
                         }
                         for bug_key, ctx_data in contexts.items()
                     }
@@ -549,7 +550,7 @@ class AnalysisPipeline:
                         self.llm_provider, self.llm_model
                     )
                     if not patches:
-                        log("No cached patches found. Run Stage 2 first.")
+                        log("ERROR: No cached patches found. Run Stage 2 first.")
                         return
                     log(f"Loaded {len(patches)} patches from cache")
 
