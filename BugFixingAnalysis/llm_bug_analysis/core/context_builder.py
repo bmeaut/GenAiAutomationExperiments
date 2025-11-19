@@ -1,12 +1,9 @@
 from __future__ import annotations
 import ast
 import re
-import json
 from pathlib import Path
 from typing import Any, Union
 from git import Repo
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 from rank_bm25 import BM25Okapi
 
 from .logger import log
@@ -217,7 +214,7 @@ class ContextBuilder:
                 log(f"        ERROR: File not found at {full_path}")
                 continue
 
-            source = self._extract_single_function_source(full_path, func_name)
+            source = ASTUtils._extract_function_source(full_path, func_name)
             if source:
                 key = f"{file_path}::{func_name}"
                 function_sources[key] = source
@@ -227,29 +224,6 @@ class ContextBuilder:
 
         log(f"      Total extracted: {len(function_sources)} sources")
         return function_sources
-
-    def _extract_single_function_source(
-        self, file_path: Path, func_name: str
-    ) -> str | None:
-        """Extract source code of a single function from a file."""
-        try:
-            source_code = file_path.read_text(encoding="utf-8")
-            tree = ast.parse(source_code)
-            lines = source_code.splitlines(keepends=True)
-
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if node.name == func_name:
-                        start_line = node.lineno - 1  # 0-indexed
-                        end_line = node.end_lineno  #  inclusive
-                        func_lines = lines[start_line:end_line]
-                        return "".join(func_lines)
-
-            return None
-
-        except Exception as e:
-            log(f"      ERROR extracting {func_name}: {e}")
-            return None
 
     def format(self, context: dict[str, Any]) -> str:
         """Turn context into LLM friendly text."""
@@ -271,7 +245,6 @@ class AAGBuilder:
     def build_syntax_graph(self, changed_files: list[str]) -> dict[str, Any]:
         """Build graph for the changed files."""
         aag = {"classes": {}, "functions": {}, "dependencies": [], "call_graph": []}
-
         log(f"      Building syntax graph for {len(changed_files)} files")
 
         errors = []
@@ -361,14 +334,11 @@ class RAGRetriever:
         query = (
             f"{bug.get('issue_title', '')} {bug.get('issue_body', '')} {comments_text}"
         )
-        # debug
-        log(f"      RAG: Query length: {len(query)} chars")
         if not query.strip():
             log(f"      RAG: WARNING  Empty query - no issue title/body!")
-        # debug
-        snippets = self._get_all_snippets(bug.get("changed_source_files", []))
 
-        log(f"      RAG: Extracted {len(snippets)} total snippets")  # debug
+        snippets = self._get_all_snippets(bug.get("changed_source_files", []))
+        log(f"      RAG: Extracted {len(snippets)} total snippets")
 
         if not snippets:
             log(f"      RAG: WARNING No snippets found!")
@@ -472,7 +442,6 @@ class RAGRetriever:
         # func signature
         extracted_lines.append(lines[start])
 
-        # docstrings give valuable info
         docstring = ""
         if isinstance(
             node, (ast.FunctionDef, ast.ClassDef, ast.Module, ast.AsyncFunctionDef)
@@ -616,6 +585,7 @@ class RAGRetriever:
             "it",
             "its",
         }
+        # filtering for 2+ character tokens, because db, fix, api, get, set etc. are valuable
         return [token for token in tokens if token not in stopwords and len(token) > 1]
 
     def _rank_snippets(
@@ -754,10 +724,9 @@ class HistoricalAnalyzer:
         for file_path in bug.get("changed_source_files", [])[:3]:  # limit to 3 files
             try:
                 commits = list(repo.iter_commits(paths=file_path, max_count=5))
-
                 for commit in commits:
-
-                    # skip the bug commit itself
+                    # skip the fix commit itself
+                    # TODO: maybe bad naming, should it be called bug_fix_commit_sha?
                     if commit.hexsha == bug.get("bug_commit_sha"):
                         continue
 
@@ -792,7 +761,10 @@ class HistoricalAnalyzer:
 
             commit_message = str(commit.message) if commit.message else ""
             message_lower = commit_message.lower()
-
+            # if issue keywords are ["memory", "leak", "parser"]
+            #   relevance for "Fix memory leak in parser module" is 3
+            #   while relevance for "fix parses crash when handling large files" is 1
+            # I don't think BM25 is necessary here
             relevance = sum(1 for kw in keywords if kw.lower() in message_lower)
 
             if relevance > 0:
@@ -831,8 +803,9 @@ class HistoricalAnalyzer:
             "and",
             "or",
         }
-
         words = re.findall(r"\w+", text.lower())
+        # filtering for 4+ character tokens, because fix, bug etc.
+        # are in all gathered commit or PR titles, not useful
         return [w for w in words if w not in stop_words and len(w) > 3]
 
 
@@ -1146,6 +1119,8 @@ class ContextFormatter:
         output = ["\n**TEST REQUIREMENTS:**"]
 
         # group test functions
+        # tests_by_file: {"tests/test_parser.py": [func1, func2]}
+        # where func1: {"file", "name", "line", "docstring", "assertions"}
         tests_by_file: dict[str, list[dict[str, Any]]] = {}
         for func in test_functions:
             file_path = func.get("file", "unknown")

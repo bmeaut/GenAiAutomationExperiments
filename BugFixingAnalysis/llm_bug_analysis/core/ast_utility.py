@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 import ast
 from pathlib import Path
 
@@ -79,7 +79,7 @@ class ASTUtils:
 
     @staticmethod
     def get_qualified_name(node: ast.AST) -> str:
-        """Get qualified name from AST node."""
+        """Get qualified (obj.method1.method2) name from AST node."""
         if isinstance(node, ast.Name):
             return node.id
         elif isinstance(node, ast.Attribute):
@@ -128,3 +128,25 @@ class ASTUtils:
 
         # no duplicates, preserve order
         return list(dict.fromkeys(calls))
+
+    @staticmethod
+    def _extract_function_source(file_path: Path, func_name: str) -> str | None:
+        """Extract source code of a specific function from a file."""
+        try:
+            source_code = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(source_code)
+            lines = source_code.splitlines(keepends=True)
+
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name == func_name:
+                        start_line = node.lineno - 1  # 0-indexed
+                        end_line = node.end_lineno  #  inclusive
+                        func_lines = lines[start_line:end_line]
+                        return "".join(func_lines)
+
+            return None
+
+        except Exception as e:
+            log(f"      ERROR extracting {func_name}: {e}")
+            return None

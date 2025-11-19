@@ -92,7 +92,6 @@ class GitOperations:
             parent = commit.parents[0]
 
             if file_paths:
-                # generate patch only for specified files
                 patch = self.repo.git.diff(
                     parent.hexsha,
                     commit.hexsha,

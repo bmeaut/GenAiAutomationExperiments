@@ -19,7 +19,7 @@ class GitHubClient:
                     "GitHub token not found! Set GITHUB_TOKEN in .env file."
                 )
 
-            cls._instance = Github(token)
+            cls._instance = Github(token, per_page=100)
 
         return cls._instance
 

@@ -102,7 +102,6 @@ class IssueLinker:
 
         try:
             issue = self.repo.get_issue(number=issue_number)
-
             if issue.pull_request:
                 return self._process_pull_request(issue, commit_date)
             else:
@@ -397,6 +396,7 @@ class CommitAnalyzer:
         )
 
         for match in hunk_pattern.finditer(patch):
+            # 3. capture group: (.*) finds the "def some_function(args):"
             context = match.group(3).strip()
 
             func_name = self._extract_function_name(context)
@@ -441,7 +441,6 @@ class CommitAnalyzer:
 
         for line in lines:
             if line.startswith("@@"):
-                # next hunk begins
                 break
             if line.startswith("+") and not line.startswith("+++"):
                 count += 1
@@ -477,7 +476,7 @@ class CommitAnalyzer:
 
         file_categorization = self._categorize_files(py_files)
 
-        # requirement: must modify both source and test files
+        # must modify both source and test files
         if not file_categorization["source_files"]:
             log(f"  Skipping commit {commit.sha[:7]}: Only test files modified.")
             return None
@@ -508,7 +507,7 @@ class CommitAnalyzer:
             f"    --> Oracle hints: {len(oracle_hints.get('modified_functions', []))} functions modified"
         )
 
-        # if all filters passed: valid data point (hopium)
+        # if all filters passed: valid data point
         return {
             "repo_name": self.repo.full_name,
             "bug_commit_sha": commit.sha,
@@ -573,7 +572,6 @@ class CorpusBuilder:
             raise RuntimeError("Load config and init GitHub client first")
 
         bugs = []
-
         try:
             repo = self.github_client.get_repo(repo_name)
 

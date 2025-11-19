@@ -199,8 +199,6 @@ class PatchValidator:
 
         best_score = 0.0
         best_line = None
-
-        # search ±20 lines around expected location
         start = max(0, hunk["old_start"] - 20)
         end = min(len(file_lines), hunk["old_start"] + 20)
 

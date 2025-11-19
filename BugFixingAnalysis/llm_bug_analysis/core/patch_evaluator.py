@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -21,7 +22,7 @@ class PatchEvaluator:
         config: dict[str, Any],
         debug_helper: DebugHelper,
         project_root: Path,
-        cache_manager: "CacheManager | None" = None,
+        cache_manager: CacheManager | None = None,
     ):
         self.test_command = test_command
         self.config = config
@@ -37,8 +38,8 @@ class PatchEvaluator:
         changed_source_files: list,
         llm_fix: dict[str, Any],
     ) -> dict[str, Any]:
-        """Evaluate pre-generated AI fix from stage 2."""
-        log("  Evaluating AI Fix with AAG/RAG...")
+        """Evaluate pre-generated LLM-made fix from stage 2."""
+        log("  Evaluating the LLM fix...")
 
         if not llm_fix or not llm_fix.get("intent"):
             log("  --> ERROR: Invalid or missing llm_fix from stage 2.")
@@ -117,12 +118,9 @@ class PatchEvaluator:
         import time
 
         log("  Evaluating Human Fix...")
-
         handler.checkout(fix_sha)
-
         repo_path = Path(handler.repo_path)
         existing_files = [f for f in changed_source_files if (repo_path / f).exists()]
-
         complexity = analyze_files(str(handler.repo_path), existing_files)
 
         # get patch stats (only for source files, for fair comparison)
@@ -170,9 +168,7 @@ class PatchEvaluator:
         patch_file.write_text(patch, encoding="utf-8")
 
         handler.checkout(parent_sha)
-
         validation = handler.validate_and_debug_patch_detailed(str(patch_file))
-
         if not validation["valid"]:
             self.debug_helper.log_validation_errors(validation)
             self.debug_helper.save_debug_info(validation, bug)
@@ -209,7 +205,6 @@ class PatchEvaluator:
             debug_helper=self.debug_helper,
         )
         test_time = time.time() - test_start
-
         handler.reset_to_commit(parent_sha)
 
         return {
@@ -267,11 +262,9 @@ class PatchEvaluator:
             return True
 
         log(f"    --> Copying {len(test_files)} human test file(s)...")
-
         for test_file in test_files:
             try:
                 human_content = handler.get_file_at_commit(human_sha, test_file)
-
                 if human_content is None:
                     log(
                         f"        WARNING: Test file {test_file} not found in human fix."

@@ -32,9 +32,7 @@ class GeminiProvider(LLMProvider):
         from google import genai
 
         self.model = model
-
         api_key = self._load_key()
-
         if not api_key:
             raise ValueError(
                 f"Gemini API key not found! Set GOOGLE_API_KEY in .env file "
@@ -61,7 +59,9 @@ class GeminiProvider(LLMProvider):
                 config=types.GenerateContentConfig(
                     temperature=0.2,
                     max_output_tokens=30000,
-                    thinking_config=types.ThinkingConfig(thinking_budget=-1),
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=-1
+                    ),  # no thinking limit
                 ),
             )
 

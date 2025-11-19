@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 import json
 import time
@@ -252,7 +253,7 @@ class LLMManager:
     def __init__(
         self,
         project_root: Path,
-        cache_manager: "CacheManager | None" = None,
+        cache_manager: CacheManager | None = None,
     ):
         self.project_root = Path(project_root)
         self.cache_manager = cache_manager

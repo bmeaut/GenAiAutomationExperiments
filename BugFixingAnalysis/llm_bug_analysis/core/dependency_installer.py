@@ -128,8 +128,6 @@ class DependencyInstaller:
             return
 
         log("  --> Installing package in editable mode...")
-
-        # determine install specification
         install_spec = self._build_install_spec(pyproject_path)
         self._execute_package_install(pyproject_path, install_spec)
 
@@ -256,8 +254,6 @@ class DependencyInstaller:
 
     def _get_poetry_path(self) -> str:
         """Get poetry executable path (system-wide or install in venv)."""
-
-        # check if poetry exists globally
         try:
             result = subprocess.run(
                 ["which", "poetry"],
@@ -274,13 +270,11 @@ class DependencyInstaller:
         except (subprocess.CalledProcessError, FileNotFoundError):
             log("  --> System poetry not found")
 
-        # check if already installed in venv
         venv_poetry = self.venv_path / "bin" / "poetry"
         if venv_poetry.exists():
             log("  --> Using venv poetry")
             return str(venv_poetry)
 
-        # install poetry in venv as fallback
         log("  --> Installing poetry in venv...")
         uv_path = self._get_uv_path()
         python_path = str(self.venv_path / "bin" / "python")
@@ -313,7 +307,6 @@ class DependencyInstaller:
 
             extras = []
 
-            # check [project.optional-dependencies]
             if "project" in data and "optional-dependencies" in data["project"]:
                 extras.extend(data["project"]["optional-dependencies"].keys())
 
@@ -344,7 +337,6 @@ class DependencyInstaller:
                 groups = list(data["dependency-groups"].keys())
                 log(f"  --> Found dependency-groups: {groups}")
                 return groups
-
             return []
 
         except Exception as e:
@@ -370,7 +362,6 @@ class DependencyInstaller:
         for pattern in patterns:
             matches = list(self.repo_path.glob(pattern))
             searched_patterns.append(pattern)
-
             for match in matches:
                 if match not in found:
                     found.append(match)
