@@ -162,3 +162,24 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
 - Szakdolgozat írása
 - Teljes pipeline futtatás, hibák alapján iterálás
 - Ha jól látom, már csak a bug kontextus összeszedés és a patchelés javítása maradt hátra, ezeket szerintem be tudom fejezni a következő egy-két hétben (említett feature-stop 2 héttel a leadás előtt)
+
+# 11. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+- 3-4 alkalommal lefuttattam a teljes pipelinet, néhány nagyobb repo miatt a tesztelés kb 12 óra ~700-800 bugra
+    - Mindig volt valami hiba, amit nem vettem észre időben, ezért kezdhettem előről, mert egy adatoszlop üres maradt, elrontottam a konfigurációt stb.
+    - Ha már bemutatták tegnap a Gemini 3 Pro modellt, akkor alkalmazom is, legfrissebb eredményeim használtam
+        - API napi limit 1 000 válasz a 2.5 Pro 10 000 válasza helyett, így ehhez egész közel voltam
+- Elkezdtem az eredmények értelmezését pandas, matplotlib és seaborn segítségével - diagrammokat generálok, keresem az indokokat arra, amit látok
+- Folytattam a szakdolgozat vázlat feltöltését
+
+- Sok kisebb hibát javítottam
+- Orákulum opció: ki lehet választani a kezelőfelületen, hogy a fixen hibás függvényből (ami a fix commitban javításra kerül), mennyi infót adunk át
+- A teszt fájlokból épített kontextus már nem képzi alapesetben az LLM-eknek átadott kontextus részét, de hozzá lehet adni a kapcsolódó tesztfüggvények fejlécét, vagy akár a bennük lévő assert sorokat
+- A hibajegyek komment szekcióját is felhasználom információgyűjtésre, kizárólag a fix commit előtt érkezett kommentekkel
+
+## Mivel fogok foglalkozni jövő héten
+- Remélhetőleg már nem nagyon nyúlok a kódba
+- Szakdolgozat írása
+- Adatok elemzése, diagrammok készítése, értelmezése, indoklása
+- Következtetések levonása
+- Pipeline futtatása még 1-2 alkalommal, néhány állított paraméterrel (lassan elfogynak az ingyen API kreditek)
