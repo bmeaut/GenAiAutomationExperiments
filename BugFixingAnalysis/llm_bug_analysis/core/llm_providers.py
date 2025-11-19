@@ -17,18 +17,18 @@ class GeminiProvider(LLMProvider):
     """Google Gemini API provider."""
 
     SUPPORTED_MODELS = {
+        "gemini-3-pro-preview",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
     }
 
-    def __init__(self, model: str = "gemini-2.5-pro"):
+    def __init__(self, model: str = "gemini-3-pro-preview"):
 
         if model not in self.SUPPORTED_MODELS:
             models = ", ".join(f"'{m}'" for m in sorted(self.SUPPORTED_MODELS))
             raise ValueError(f"Unknown model '{model}'. Supported: {models}")
 
-        # lazy import - only load when Gemini is actually used
         from google import genai
 
         self.model = model
@@ -124,7 +124,7 @@ class GeminiProvider(LLMProvider):
 
 def get_llm_provider(
     provider: str = "gemini",
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-3-pro-preview",
 ) -> LLMProvider:
 
     provider = provider.lower()

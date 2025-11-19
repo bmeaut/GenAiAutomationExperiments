@@ -68,7 +68,7 @@ class AnalysisPipeline:
         skip_llm_fix: bool = False,
         debug_on_failure: bool = False,
         llm_provider: str = "gemini",
-        llm_model: str = "gemini-2.5-flash",
+        llm_model: str = "gemini-3-pro-preview",
         show_terminals: bool = True,
     ):
         """Set up pipeline with config and LLM settings."""

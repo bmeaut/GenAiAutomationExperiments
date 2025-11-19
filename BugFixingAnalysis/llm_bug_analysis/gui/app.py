@@ -41,7 +41,7 @@ class BugAnalysisGUI(tk.Frame):
         self.show_terminals = tk.BooleanVar(value=True)
 
         self.llm_provider = tk.StringVar(value="manual")
-        self.llm_model = tk.StringVar(value="gemini-2.5-flash")
+        self.llm_model = tk.StringVar(value="gemini-3-pro-preview")
         self.test_context_level = tk.StringVar(value="assertions")
         self.oracle_level = tk.StringVar(value="none")
 
@@ -259,7 +259,12 @@ class BugAnalysisGUI(tk.Frame):
         self.model_dropdown = ttk.Combobox(
             llm_container,
             textvariable=self.llm_model,
-            values=["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+            values=[
+                "gemini-3-pro-preview",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+            ],
             state="readonly",
             width=15,
         )
@@ -995,7 +1000,7 @@ class BugAnalysisGUI(tk.Frame):
                 self.repository_listbox.insert(tk.END, repo)
 
             self.llm_provider.set(config.get("llm_provider", "manual"))
-            self.llm_model.set(config.get("llm_model", "gemini-2.5-flash"))
+            self.llm_model.set(config.get("llm_model", "gemini-3-pro-preview"))
             self.test_context_level.set(config.get("test_context_level", "assertions"))
             self.oracle_level.set(config.get("oracle_level", "none"))
             self.parallel_workers.set(config.get("max_parallel_llm", 5))

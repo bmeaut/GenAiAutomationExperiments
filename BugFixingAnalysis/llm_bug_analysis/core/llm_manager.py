@@ -262,7 +262,7 @@ class LLMManager:
         bug: dict[str, Any],
         context_text: str,
         provider: str = "gemini",
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3-pro-preview",
     ) -> dict[str, Any]:
         """Generate fix from prebuilt context."""
         import time

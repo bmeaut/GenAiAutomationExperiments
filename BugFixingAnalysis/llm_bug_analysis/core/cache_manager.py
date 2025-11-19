@@ -105,6 +105,7 @@ class CacheManager:
         if corpus is None:
             corpus = self._load_corpus()
             if not corpus:
+                log("WARNING: No corpus found!")
                 return {}
 
         contexts = {}
