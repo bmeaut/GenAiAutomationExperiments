@@ -183,3 +183,9 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
 - Adatok elemzése, diagrammok készítése, értelmezése, indoklása
 - Következtetések levonása
 - Pipeline futtatása még 1-2 alkalommal, néhány állított paraméterrel (lassan elfogynak az ingyen API kreditek)
+
+# 12. heti "Work Out Loud"
+## Mivel foglalkoztam eddig
+
+
+## Mivel fogok foglalkozni jövő héten
