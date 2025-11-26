@@ -186,6 +186,10 @@ Illetve feldolgoztam az összegyűjtött publikációkat.
 
 # 12. heti "Work Out Loud"
 ## Mivel foglalkoztam eddig
-
+- Minden szakdolgozat fejezethez összeírtam ami eszembe jutott, még konzisztens folyószöveggé kell fogalmaznom, kommentelt részeket kiegészítenem
+- Források nagy részét már helyes formátumban hivatkozom
+- Elhasználtam az ingyen Gemini API krediteket, $298.8/$300 felhasználásra került: sajnos még egy teljes pipeline futtatás más paraméterekkel már nem fért bele
 
 ## Mivel fogok foglalkozni jövő héten
+- A PlantUML diagrammok kinézetével nem vagyok megelégedve, azokon szeretnék javítani
+- Jövő hétre szeretném olyan állapotba hozni a szakdolgozatot, hogy már át tudjam adni ellenőrzésre, hogy 14. héten csak a hibák javítására kelljen figyelni
